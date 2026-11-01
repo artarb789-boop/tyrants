@@ -1,0 +1,52 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Тираны Подземья</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<div id="setup" class="screen">
+  <div class="setupBox">
+    <h1>Тираны Подземья</h1>
+    <p class="sub">Цифровая версия по PnP · 2–4 игрока, люди и боты на одном устройстве</p>
+    <div id="setupBody"></div>
+  </div>
+</div>
+
+<div id="game" class="hidden">
+  <div id="boardWrap"><div id="board"><img src="img/board.jpg" alt="Поле"><svg id="svg" viewBox="0 0 2000 2000"></svg></div></div>
+  <div id="side">
+    <div class="topbar"><span id="turnTitle"></span><span class="sp"></span><button id="bRules" class="mini">Правила</button><button id="bMenu" class="mini">Меню</button></div>
+    <div id="players"></div>
+    <div class="box"><div class="hdr">Рынок <span id="mdeckCount" class="dim"></span></div><div id="market"></div><div id="supply"></div></div>
+    <div class="box turn">
+      <div id="prompt"></div>
+      <div class="poolRow">
+        <span class="res pow" title="Сила">⚔ <b id="powN">0</b></span>
+        <span class="res inf" title="Влияние">🕸 <b id="infN">0</b></span>
+        <button id="bDeploy">Отправить отряд <small>1⚔</small></button>
+        <button id="bKill">Уничтожить <small>3⚔</small></button>
+        <button id="bSpy">Выслать шпиона <small>3⚔</small></button>
+      </div>
+      <div class="hdr">Сыграно</div><div id="played"></div>
+      <div class="hdr"><span id="handTitle">Рука</span><span class="sp"></span><button id="bAll" class="mini">Сыграть простые карты</button><button id="bEnd" class="endBtn">Завершить ход</button></div>
+      <div id="hand"></div>
+    </div>
+    <div class="box logBox"><div class="hdr">Журнал</div><div id="log"></div></div>
+  </div>
+</div>
+
+<div id="modal" class="hidden"></div>
+<div id="zoom" class="hidden"><img alt=""></div>
+<div id="flash"></div>
+
+<script src="js/data_cards.js"></script>
+<script src="js/data_board.js"></script>
+<script src="js/engine.js"></script>
+<script src="js/effects.js"></script>
+<script src="js/ai.js"></script>
+<script src="js/ui.js"></script>
+</body>
+</html>
