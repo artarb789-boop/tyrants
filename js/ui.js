@@ -86,7 +86,52 @@ const UI = (() => {
     const xs = ls.map(l => l.x), ys = ls.map(l => l.y);
     return { x0: Math.min(...xs), x1: Math.max(...xs), y0: Math.min(...ys), y1: Math.max(...ys) };
   }
+  // ---------- приближение и перемещение поля ----------
+  const view = { s: 1, x: 0, y: 0 };
+  let dragged = false;
+  function applyView() {
+    const wrap = $('#boardWrap'), W = wrap.clientWidth, H = wrap.clientHeight;
+    view.s = Math.max(1, Math.min(6, view.s));
+    view.x = Math.min(0, Math.max(W - W * view.s, view.x));
+    view.y = Math.min(0, Math.max(H - H * view.s, view.y));
+    $('#board').style.transform = `translate(${view.x}px, ${view.y}px) scale(${view.s})`;
+  }
+  function zoomAt(f, mx, my) {
+    const ns = Math.max(1, Math.min(6, view.s * f));
+    view.x = mx - (mx - view.x) * ns / view.s; view.y = my - (my - view.y) * ns / view.s; view.s = ns;
+    applyView();
+  }
+  function resetView() { view.s = 1; view.x = 0; view.y = 0; applyView(); }
+  function bindPanZoom() {
+    const wrap = $('#boardWrap');
+    wrap.addEventListener('wheel', e => {
+      e.preventDefault();
+      const r = wrap.getBoundingClientRect();
+      zoomAt(e.deltaY < 0 ? 1.2 : 1 / 1.2, e.clientX - r.left, e.clientY - r.top);
+    }, { passive: false });
+    let start = null;
+    wrap.addEventListener('pointerdown', e => {
+      if (e.button !== 0 || e.target.closest('#zoomCtl')) return;
+      start = { x: e.clientX, y: e.clientY, vx: view.x, vy: view.y }; dragged = false;
+    });
+    window.addEventListener('pointermove', e => {
+      if (!start) return;
+      const dx = e.clientX - start.x, dy = e.clientY - start.y;
+      if (!dragged && Math.hypot(dx, dy) < 6) return;
+      dragged = true; $('#board').classList.add('panning');
+      view.x = start.vx + dx; view.y = start.vy + dy; applyView();
+    });
+    window.addEventListener('pointerup', () => { start = null; $('#board').classList.remove('panning'); });
+    // после перетаскивания клик по локации не срабатывает
+    wrap.addEventListener('click', e => { if (dragged) { e.stopPropagation(); e.preventDefault(); dragged = false; } }, true);
+    const c = () => { const r = wrap.getBoundingClientRect(); return [r.width / 2, r.height / 2]; };
+    $('#zIn').onclick = () => zoomAt(1.4, ...c());
+    $('#zOut').onclick = () => zoomAt(1 / 1.4, ...c());
+    $('#zReset').onclick = resetView;
+    window.addEventListener('resize', applyView);
+  }
   function buildBoardStatic() {
+    resetView();
     const svg = $('#svg'); svg.innerHTML = '';
     const bimg = $('#board img');
     if (S.board.web) {
@@ -436,7 +481,7 @@ const UI = (() => {
       <p><b>Фанатские дополнения.</b> <i>Осада</i> и <i>Юголоты</i> — новые колоды рынка; <i>Паукообразные</i> добавляют паутину игрока (карты в ней считаются колодой в конце игры и усиливают пауков по аспектам) и Отравленных слуг (−1 ПО, избавиться — вернуть своего шпиона или 2 своих отряда из региона).
       <i>Места Силы</i> — другие бонусы полного контроля на жетонах (в начале хода). <i>Камни Тьмы</i> — под белыми отрядами лежат камни: уничтожив отряд, можно вернуть его в запас и забрать камень (+1 сила / +1 влияние) или взять в трофеи, убрав камень.
       <i>Демоническая паутина</i> — поле из гексов: камни силы ◆ на тупиках маршрутов захватываются отрядом за 1 силу (1 за ход) и тратятся со следующего хода на +3 силы или +3 влияния.</p>
-      <p><b>Подсказки</b>: наведите курсор на карту — она увеличится; на регион — увидите расклад сил. Значок 👑 у игрока — посмотреть внутренний круг.</p></div>`;
+      <p><b>Подсказки</b>: поле приближается колесом мыши или кнопками ＋/－ справа сверху и перетаскивается мышью; ⤢ — показать всё поле. Наведите курсор на карту — она увеличится; на регион — увидите расклад сил. Значок 👑 у игрока — посмотреть внутренний круг.</p></div>`;
     m.append(el('button', { class: 'skip', onclick: closeModal }, 'Закрыть'));
   }
 
@@ -449,7 +494,9 @@ const UI = (() => {
       const t = e.target;
       if (t.tagName === 'IMG' && t.dataset.cid && !t.classList.contains('mcard')) {
         const z = $('#zoom'); z.querySelector('img').src = img(t.dataset.cid); z.classList.remove('hidden');
-        const r = t.getBoundingClientRect(); const w = 300, h = 420;
+        // на больших экранах превью крупнее
+        const r = t.getBoundingClientRect(); const w = Math.round(Math.max(300, Math.min(480, innerHeight * 0.42))), h = Math.round(w * 1.4);
+        z.style.setProperty('--zw', w + 'px');
         let x = r.right + 12; if (x + w > innerWidth) x = r.left - w - 12; if (x < 0) x = 8;
         let y = r.top + r.height / 2 - h / 2; y = Math.max(8, Math.min(innerHeight - h - 8, y));
         z.style.left = x + 'px'; z.style.top = y + 'px';
@@ -459,6 +506,6 @@ const UI = (() => {
     document.addEventListener('mousedown', hideZoom, true);
   }
 
-  document.addEventListener('DOMContentLoaded', () => { initSetup(); bindButtons(); bindZoom(); });
+  document.addEventListener('DOMContentLoaded', () => { initSetup(); bindButtons(); bindZoom(); bindPanZoom(); });
   return { ask, render, humanTurn, showScores, onLog };
 })();

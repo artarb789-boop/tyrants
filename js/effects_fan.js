@@ -126,7 +126,7 @@ Object.assign(EFFECTS, {
     const r = await placeSpy(ctx); if (!r) return;
     const t = S.tokens[r];
     if (t && t.owner === ctx.p) {
-      if (t.pop && t.full) await applyPop(ctx.p, r, t.pop);
+      if (t.pop && t.full) { await applyPop(ctx.p, r, t.pop); if (t.pop.vp) gainVP(ctx.p, t.pop.vp, `жетон «${REG[r].name}»`); }
       else { gain(ctx, 0, 1); if (t.full && REG[r].token.fullVp) gainVP(ctx.p, REG[r].token.fullVp, `жетон «${REG[r].name}»`); }
     }
   },

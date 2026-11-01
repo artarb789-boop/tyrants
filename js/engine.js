@@ -8,13 +8,14 @@ const DECK_RU = { drow: 'Дроу', dragons: 'Драконы', elementals: 'Эл
 const FAN_DECKS = ['siege', 'yugoloths', 'arachnids'];
 // «Места Силы»: альтернативные стороны полного контроля (по 2 на регион, одна выбирается случайно)
 const POP = {
-  gauntlgrym: [{ inf: 2 }, { draw: 1, discard: 1 }], menzo: [{ inf: 2, pow: 1 }, { draw: 2, discard: 1 }],
-  sszuraassnii: [{ inf: 2 }, { draw: 1, discard: 1 }], chchitl: [{ inf: 2 }, { draw: 1, discard: 1 }],
-  araumycos: [{ inf: 3 }, { draw: 2, discard: 0 }], sinviilik: [{ inf: 2 }, { draw: 1, discard: 1 }], faerlin: [{ inf: 2 }, { draw: 1, discard: 1 }],
+  // значок паутины на стороне полного контроля — ПО (начисляются в конце хода, как в базе)
+  gauntlgrym: [{ vp: 2 }, { draw: 1, discard: 1 }], menzo: [{ vp: 2, pow: 1 }, { draw: 2, discard: 1 }],
+  sszuraassnii: [{ vp: 2 }, { draw: 1, discard: 1 }], chchitl: [{ vp: 2 }, { draw: 1, discard: 1 }],
+  araumycos: [{ vp: 3 }, { draw: 2, discard: 0 }], sinviilik: [{ vp: 2 }, { draw: 1, discard: 1 }], faerlin: [{ vp: 2 }, { draw: 1, discard: 1 }],
 };
 function popText(e) {
   const a = [];
-  if (e.inf) a.push(`+${e.inf} влияния`); if (e.pow) a.push(`+${e.pow} силы`);
+  if (e.vp) a.push(`+${e.vp} ПО в конце хода`); if (e.pow) a.push(`+${e.pow} силы`);
   if (e.draw) a.push(`взять ${e.draw}`); if (e.discard) a.push(`сбросить ${e.discard}`);
   return a.join(', ');
 }
@@ -653,9 +654,11 @@ async function startTurn() {
   if (S.players[S.cur].bot) { await AI.takeTurn(S.cur); await endTurn(); }
   else UI.humanTurn();
 }
+// начало хода: сила и добор/сброс с жетона «Места Силы» (ПО — в конце хода)
 async function applyPop(p, rid, e) {
-  log(`${pn(p)}: полный контроль «${REG[rid].name}» — ${popText(e)}.`);
-  S.pool.i += e.inf || 0; S.pool.p += e.pow || 0;
+  if (!e.pow && !e.draw) return;
+  log(`${pn(p)}: полный контроль «${REG[rid].name}» — ${popText(Object.assign({}, e, { vp: 0 }))}.`);
+  S.pool.p += e.pow || 0;
   if (e.draw) drawCards(p, e.draw);
   for (let k = 0; k < (e.discard || 0); k++) {
     const P = S.players[p]; if (!P.hand.length) break;
@@ -681,7 +684,7 @@ async function endTurn() {
     if (await ask(p, { kind: 'yesno', text: `Добавить ${cn(u)} в паутину?`, purpose: 'web', card: S.cards[u] })) { take(S.played, u); P.web.push(u); log(`${pn(p)} добавляет ${cn(u)} в паутину.`); }
   }
   if (S.flags.neogi) for (let k = 0; k < S.flags.neogi; k++) for (const Q of S.players) if (Q.idx !== p) await forceDiscard(ctxFor(p, null), Q.idx);
-  for (const rid in S.tokens) { const t = S.tokens[rid]; if (t.owner === p && t.full && !t.pop && REG[rid].token.fullVp) gainVP(p, REG[rid].token.fullVp, `полный контроль «${REG[rid].name}»`); }
+  for (const rid in S.tokens) { const t = S.tokens[rid]; if (t.owner !== p || !t.full) continue; const vp = t.pop ? t.pop.vp || 0 : REG[rid].token.fullVp; if (vp) gainVP(p, vp, `полный контроль «${REG[rid].name}»`); }
   P.discard.push(...S.played, ...P.hand); S.played = []; P.hand = [];
   drawCards(p, 5);
   S.flags = {}; S.pool = { p: 0, i: 0 }; P.stonesNew = 0;
