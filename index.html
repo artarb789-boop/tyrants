@@ -16,27 +16,30 @@
 </div>
 
 <div id="game" class="hidden">
-  <div id="boardWrap"><div id="board"><img src="img/board.jpg" alt="Поле"><svg id="svg" viewBox="0 0 2000 2000"></svg></div>
-    <div id="zoomCtl"><button id="zIn" title="Приблизить (колесо мыши)">＋</button><button id="zOut" title="Отдалить">－</button><button id="zReset" title="Показать всё поле">⤢</button></div></div>
+  <div id="boardWrap"><div id="board"><svg id="svg" viewBox="0 0 2000 2000"></svg></div>
+    <div id="zoomCtl"><button id="zIn" title="Приблизить (колесо мыши)">＋</button><button id="zOut" title="Отдалить">－</button><button id="zReset" title="Показать всё поле и вернуть поворот">⤢</button><button id="rL" title="Вращать против часовой (зажмите; клавиша Q или правая кнопка мыши)">⟲</button><button id="rR" title="Вращать по часовой (зажмите; клавиша E или правая кнопка мыши)">⟳</button></div></div>
   <div id="side">
-    <div class="topbar"><span id="turnTitle"></span><span class="sp"></span><button id="bRules" class="mini">Правила</button><button id="bMenu" class="mini">Меню</button></div>
+    <div class="topbar"><span id="turnTitle"></span><span class="sp"></span><span class="tabs"><button id="tabGame" class="tab on">Игра</button><button id="tabLog" class="tab">Журнал <b id="logNew"></b></button></span><button id="bRules" class="mini">Правила</button><button id="bMenu" class="mini">Меню</button></div>
+    <div id="paneGame" class="pane">
     <div id="players"></div>
     <div class="box"><div class="hdr">Рынок <span id="mdeckCount" class="dim"></span></div><div id="market"></div><div id="supply"></div></div>
     <div class="box turn">
       <div id="prompt"></div>
       <div class="poolRow">
-        <span class="res pow" title="Сила">⚔ <b id="powN">0</b></span>
-        <span class="res inf" title="Влияние">🕸 <b id="infN">0</b></span>
-        <button id="bDeploy">Отправить отряд <small>1⚔</small></button>
-        <button id="bKill">Уничтожить <small>3⚔</small></button>
-        <button id="bSpy">Выслать шпиона <small>3⚔</small></button>
+        <span class="res pow" title="Сила"><i class="ic pow"></i> <b id="powN">0</b></span>
+        <span class="res inf" title="Влияние"><i class="ic inf"></i> <b id="infN">0</b></span>
+        <button id="bDeploy" title="Отправить отряд за 1 силу (подряд, пока хватает силы)">Отряд <small>1<i class="ic pow"></i></small></button>
+        <button id="bKill" title="Уничтожить вражеский отряд за 3 силы">Убить <small>3<i class="ic pow"></i></small></button>
+        <button id="bSpy" title="Выслать вражеского шпиона за 3 силы">Выслать <small>3<i class="ic pow"></i></small></button>
         <span id="gems"></span>
+        <span class="turnBtns"><button id="bAll" title="Сыграть простые карты: Знать, Солдат, Жрица Ллот, Страж Дома">Простые карты</button><button id="bEnd" class="endBtn">Завершить ход</button></span>
       </div>
       <div class="hdr">Сыграно</div><div id="played"></div>
-      <div class="hdr"><span id="handTitle">Рука</span><span class="sp"></span><button id="bAll" class="mini">Сыграть простые карты</button><button id="bEnd" class="endBtn">Завершить ход</button></div>
+      <div class="hdr"><span id="handTitle">Рука</span></div>
       <div id="hand"></div>
     </div>
-    <div class="box logBox"><div class="hdr">Журнал</div><div id="log"></div></div>
+    </div>
+    <div id="paneLog" class="pane hidden"><div class="box logBox"><div class="hdr">Журнал партии</div><div id="log"></div></div></div>
   </div>
 </div>
 

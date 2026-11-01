@@ -7,7 +7,18 @@ const UI = (() => {
   const SVGNS = 'http://www.w3.org/2000/svg';
   const sv = (tag, attrs = {}) => { const e = document.createElementNS(SVGNS, tag); for (const k in attrs) e.setAttribute(k, attrs[k]); return e; };
   const img = cid => `img/cards/${cid}.webp`;
-  const POW = '<span class="ico pow">⚔</span>', INF = '<span class="ico inf">🕸</span>';
+  // значки силы и влияния как на картах: меч и паутина в белом кружке
+  const icoSvg = inner => 'data:image/svg+xml,' + encodeURIComponent(`<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32"><circle cx="16" cy="16" r="14.4" fill="#fff" stroke="#1a1420" stroke-width="2.6"/>${inner}</svg>`);
+  const POW_URI = icoSvg('<g fill="#1a1420"><circle cx="16" cy="5.6" r="1.7"/><rect x="15" y="6" width="2" height="4.4"/><path d="M9.6 10.2h12.8l-1 2.2H10.6z"/><path d="M14.5 12.4h3l-.2 10.8L16 27.4l-1.3-4.2z"/><path d="M8.4 13.6c1.6 3.2 3.4 4.6 5.4 5.2v-2.6c-1.6-.6-3.4-1.6-5.4-2.6zM23.6 13.6c-1.6 3.2-3.4 4.6-5.4 5.2v-2.6c1.6-.6 3.4-1.6 5.4-2.6z"/></g>');
+  const INF_URI = icoSvg((() => {
+    const pt = (r, k) => [16 + r * Math.cos(k * Math.PI / 4 + Math.PI / 8), 16 + r * Math.sin(k * Math.PI / 4 + Math.PI / 8)].map(v => v.toFixed(2)).join(' ');
+    let d = ''; for (let k = 0; k < 8; k++) d += `M16 16L${pt(12.4, k)}`;
+    for (const r of [3.6, 7.2, 10.8]) { d += `M${pt(r, 0)}`; for (let k = 1; k <= 8; k++) d += `Q${pt(r * 0.78, k - 0.5)} ${pt(r, k)}`; }
+    return `<path d="${d}" fill="none" stroke="#1a1420" stroke-width="1.15"/>`;
+  })());
+  document.head.append(el('style', {}, `.ic.pow{background-image:url("${POW_URI}")}.ic.inf{background-image:url("${INF_URI}")}`));
+  const POW = '<i class="ic pow"></i>', INF = '<i class="ic inf"></i>';
+  const LEVEL_RU = { easy: 'лёгкий бот', normal: 'бот', hard: 'тяжёлый бот' };
 
   let pending = null;   // { req, resolve }
   let busy = false;     // идёт розыгрыш эффекта / ход бота
@@ -17,7 +28,7 @@ const UI = (() => {
   const myTurn = () => S && S.phase === 'turn' && !S.players[S.cur].bot && !busy && !pending;
 
   // ---------- настройка ----------
-  const setup = { n: 2, seats: [], decks: ['drow', 'dragons'], side: 'L', speed: 450, modules: { pop: false, gems: false } };
+  const setup = { n: 2, seats: [], decks: ['drow', 'dragons'], side: 'L', speed: 450, level: 'normal', modules: { pop: false, gems: false } };
   function initSetup() {
     for (let i = 0; i < 4; i++) setup.seats.push({ name: i === 0 ? 'Игрок' : HOUSES[i].name, bot: i !== 0 });
     try { const s = JSON.parse(localStorage.getItem('tyrants.setup') || 'null'); if (s) Object.assign(setup, s); } catch (e) {}
@@ -28,6 +39,7 @@ const UI = (() => {
     const nRow = el('div', { class: 'row' }, '<span class="lbl">Игроков:</span>');
     for (const n of [2, 3, 4]) nRow.append(el('button', { class: 'pill' + (setup.n === n ? ' on' : ''), onclick: () => { setup.n = n; renderSetup(); } }, n));
     box.append(nRow);
+    const seats = el('div', { class: 'seats' + (setup.n > 2 ? ' two' : '') });
     for (let i = 0; i < setup.n; i++) {
       const s = setup.seats[i];
       const r = el('div', { class: 'row seat' });
@@ -36,8 +48,9 @@ const UI = (() => {
       const inp = el('input', { value: s.name, maxlength: 18 }); inp.oninput = () => { s.name = inp.value; };
       r.append(inp);
       for (const [b, t] of [[false, 'Человек'], [true, 'Бот']]) r.append(el('button', { class: 'pill' + (s.bot === b ? ' on' : ''), onclick: () => { s.bot = b; renderSetup(); } }, t));
-      box.append(r);
+      seats.append(r);
     }
+    box.append(seats);
     const dRow = el('div', { class: 'row wrap' }, '<span class="lbl">Колоды рынка (выберите 2):</span>');
     const fRow = el('div', { class: 'row wrap' }, '<span class="lbl">Фанатские колоды:</span>');
     for (const d of Object.keys(DECK_RU)) (FAN_DECKS.includes(d) ? fRow : dRow).append(el('button', { class: 'pill' + (setup.decks.includes(d) ? ' on' : ''), onclick: () => {
@@ -60,6 +73,10 @@ const UI = (() => {
     const spRow = el('div', { class: 'row' }, '<span class="lbl">Скорость ботов:</span>');
     for (const [v, t] of [[900, 'медленно'], [450, 'обычно'], [120, 'быстро']]) spRow.append(el('button', { class: 'pill' + (setup.speed === v ? ' on' : ''), onclick: () => { setup.speed = v; renderSetup(); } }, t));
     box.append(spRow);
+    const lRow = el('div', { class: 'row' }, '<span class="lbl">Сложность ботов:</span>');
+    for (const [v, t, hint] of [['easy', 'лёгкая', 'ошибается, тратит не всю силу'], ['normal', 'средняя', ''], ['hard', 'тяжёлая', 'следит за лидером, бережёт отряды, выше ценит повышения']])
+      lRow.append(el('button', { class: 'pill' + ((setup.level || 'normal') === v ? ' on' : ''), title: hint, onclick: () => { setup.level = v; renderSetup(); } }, t));
+    box.append(lRow);
     const ok = setup.decks.length === 2;
     box.append(el('div', { class: 'row' }, `<span class="hint">${setup.n === 2 ? 'Вдвоём играется только центральная часть поля.' : setup.n === 3 ? 'Втроём — центр и одна боковая часть.' : 'Вчетвером — всё поле.'} Первая партия — рекомендуются Дроу + Драконы.</span>`));
     const st = el('button', { class: 'big', onclick: start }, 'Начать партию'); if (!ok) st.disabled = true;
@@ -67,10 +84,10 @@ const UI = (() => {
   }
   async function start() {
     try { localStorage.setItem('tyrants.setup', JSON.stringify(setup)); } catch (e) {}
-    const players = setup.seats.slice(0, setup.n).map((s, i) => ({ name: s.name.trim() || HOUSES[i].name, bot: s.bot, hex: HOUSES[i].hex, house: HOUSES[i].name }));
+    const players = setup.seats.slice(0, setup.n).map((s, i) => ({ name: s.name.trim() || HOUSES[i].name, bot: s.bot, level: setup.level || 'normal', hex: HOUSES[i].hex, house: HOUSES[i].name }));
     newGame({ players, decks: setup.decks, side: setup.side, botDelay: setup.speed, modules: setup.modules, board: setup.board || 'base' });
     $('#setup').classList.add('hidden'); $('#game').classList.remove('hidden');
-    $('#log').innerHTML = ''; S.log.forEach(m => onLog(m));
+    $('#log').innerHTML = ''; S.log.forEach(m => onLog(m)); logNew = 0; setTab('game');
     buildBoardStatic(); render();
     await initialDeploy();
     await startTurn();
@@ -86,22 +103,61 @@ const UI = (() => {
     const xs = ls.map(l => l.x), ys = ls.map(l => l.y);
     return { x0: Math.min(...xs), x1: Math.max(...xs), y0: Math.min(...ys), y1: Math.max(...ys) };
   }
-  // ---------- приближение и перемещение поля ----------
-  const view = { s: 1, x: 0, y: 0 };
+  // ---------- камера: приближение, перемещение, вращение (как в RTS) ----------
+  // экран = (x, y) + R(a) · s · точка поля; вращение — вокруг центра экрана
+  const view = { s: 1, x: 0, y: 0, a: 0 };
   let dragged = false;
+  const wrapSize = () => { const w = $('#boardWrap'); return [w.clientWidth, w.clientHeight]; };
+  const center = () => wrapSize().map(v => v / 2);
   function applyView() {
-    const wrap = $('#boardWrap'), W = wrap.clientWidth, H = wrap.clientHeight;
-    view.s = Math.max(1, Math.min(6, view.s));
-    view.x = Math.min(0, Math.max(W - W * view.s, view.x));
-    view.y = Math.min(0, Math.max(H - H * view.s, view.y));
-    $('#board').style.transform = `translate(${view.x}px, ${view.y}px) scale(${view.s})`;
+    const [W, H] = wrapSize();
+    view.s = Math.max(0.6, Math.min(6, view.s));
+    // центр поля не уходит за край экрана
+    const r = view.a * Math.PI / 180, co = Math.cos(r), si = Math.sin(r);
+    const cx = view.x + view.s * (co * W / 2 - si * H / 2), cy = view.y + view.s * (si * W / 2 + co * H / 2);
+    view.x += Math.min(W, Math.max(0, cx)) - cx; view.y += Math.min(H, Math.max(0, cy)) - cy;
+    $('#board').style.transform = `translate(${view.x}px, ${view.y}px) rotate(${view.a}deg) scale(${view.s})`;
   }
   function zoomAt(f, mx, my) {
-    const ns = Math.max(1, Math.min(6, view.s * f));
+    const ns = Math.max(0.6, Math.min(6, view.s * f));
     view.x = mx - (mx - view.x) * ns / view.s; view.y = my - (my - view.y) * ns / view.s; view.s = ns;
     applyView();
   }
-  function resetView() { view.s = 1; view.x = 0; view.y = 0; applyView(); }
+  function rotateAt(da, mx, my) {
+    const r = da * Math.PI / 180, co = Math.cos(r), si = Math.sin(r), dx = view.x - mx, dy = view.y - my;
+    view.x = mx + dx * co - dy * si; view.y = my + dx * si + dy * co; view.a = (view.a + da) % 360;
+    applyView();
+  }
+  // плавный возврат: масштаб 1, без поворота
+  let tween = 0;
+  function resetView(animate) {
+    cancelAnimationFrame(tween);
+    const from = { ...view }, to = { s: 1, x: 0, y: 0, a: Math.abs(view.a) > 180 ? Math.sign(view.a) * 360 : 0 };
+    if (!animate) { Object.assign(view, { s: 1, x: 0, y: 0, a: 0 }); applyView(); return; }
+    const t0 = performance.now(), T = 350;
+    const step = now => {
+      const k = Math.min(1, (now - t0) / T), e = 1 - Math.pow(1 - k, 3);
+      for (const key in to) view[key] = from[key] + (to[key] - from[key]) * e;
+      if (k < 1) { $('#board').style.transform = `translate(${view.x}px, ${view.y}px) rotate(${view.a}deg) scale(${view.s})`; tween = requestAnimationFrame(step); }
+      else { view.a = 0; applyView(); }
+    };
+    tween = requestAnimationFrame(step);
+  }
+  // вращение с разгоном и торможением: spin — куда крутить (−1, 0, 1)
+  const SPIN_MAX = 110, SPIN_ACC = 650;   // град/с, град/с²
+  let spin = 0, spinV = 0, spinRaf = 0;
+  function setSpin(d) {
+    spin = d; if (spinRaf) return;
+    cancelAnimationFrame(tween);
+    let last = performance.now();
+    const step = now => {
+      const dt = Math.min(0.05, (now - last) / 1000), dv = SPIN_ACC * dt; last = now;
+      spinV += Math.max(-dv, Math.min(dv, spin * SPIN_MAX - spinV));
+      if (spinV) rotateAt(spinV * dt, ...center());
+      if (spin || Math.abs(spinV) > 1) spinRaf = requestAnimationFrame(step); else { spinV = 0; spinRaf = 0; }
+    };
+    spinRaf = requestAnimationFrame(step);
+  }
   function bindPanZoom() {
     const wrap = $('#boardWrap');
     wrap.addEventListener('wheel', e => {
@@ -109,46 +165,63 @@ const UI = (() => {
       const r = wrap.getBoundingClientRect();
       zoomAt(e.deltaY < 0 ? 1.2 : 1 / 1.2, e.clientX - r.left, e.clientY - r.top);
     }, { passive: false });
+    // левая кнопка — перемещение, правая или средняя — вращение
     let start = null;
     wrap.addEventListener('pointerdown', e => {
-      if (e.button !== 0 || e.target.closest('#zoomCtl')) return;
-      start = { x: e.clientX, y: e.clientY, vx: view.x, vy: view.y }; dragged = false;
+      if (e.target.closest('#zoomCtl') || e.button > 2) return;
+      if (e.button !== 0) e.preventDefault();
+      cancelAnimationFrame(tween);
+      start = { x: e.clientX, y: e.clientY, vx: view.x, vy: view.y, rot: e.button !== 0, lx: e.clientX }; dragged = false;
     });
     window.addEventListener('pointermove', e => {
       if (!start) return;
       const dx = e.clientX - start.x, dy = e.clientY - start.y;
       if (!dragged && Math.hypot(dx, dy) < 6) return;
       dragged = true; $('#board').classList.add('panning');
+      if (start.rot) { rotateAt((e.clientX - start.lx) * 0.35, ...center()); start.lx = e.clientX; return; }
       view.x = start.vx + dx; view.y = start.vy + dy; applyView();
     });
     window.addEventListener('pointerup', () => { start = null; $('#board').classList.remove('panning'); });
+    wrap.addEventListener('contextmenu', e => e.preventDefault());
+    wrap.addEventListener('auxclick', e => e.preventDefault());
     // после перетаскивания клик по локации не срабатывает
     wrap.addEventListener('click', e => { if (dragged) { e.stopPropagation(); e.preventDefault(); dragged = false; } }, true);
-    const c = () => { const r = wrap.getBoundingClientRect(); return [r.width / 2, r.height / 2]; };
-    $('#zIn').onclick = () => zoomAt(1.4, ...c());
-    $('#zOut').onclick = () => zoomAt(1 / 1.4, ...c());
-    $('#zReset').onclick = resetView;
+    $('#zIn').onclick = () => zoomAt(1.4, ...center());
+    $('#zOut').onclick = () => zoomAt(1 / 1.4, ...center());
+    $('#zReset').onclick = () => resetView(true);
+    // кнопки вращения — пока зажаты
+    for (const [id, d] of [['#rL', -1], ['#rR', 1]]) {
+      const b = $(id);
+      b.addEventListener('pointerdown', e => { e.preventDefault(); b.setPointerCapture(e.pointerId); setSpin(d); });
+      for (const ev of ['pointerup', 'pointercancel', 'lostpointercapture']) b.addEventListener(ev, () => { if (spin === d) setSpin(0); });
+    }
+    // Q / E — вращение, пока клавиша зажата
+    const KEYS = { KeyQ: -1, KeyE: 1 };
+    window.addEventListener('keydown', e => {
+      if (!(e.code in KEYS) || e.repeat || e.ctrlKey || e.metaKey || e.altKey || (e.target.closest && e.target.closest('input, textarea')) || $('#game').classList.contains('hidden')) return;
+      setSpin(KEYS[e.code]);
+    });
+    window.addEventListener('keyup', e => { if (e.code in KEYS && spin === KEYS[e.code]) setSpin(0); });
+    window.addEventListener('blur', () => setSpin(0));
     window.addEventListener('resize', applyView);
   }
   function buildBoardStatic() {
     resetView();
     const svg = $('#svg'); svg.innerHTML = '';
-    const bimg = $('#board img');
+    svg.setAttribute('viewBox', (S.board.web ? S.board.view : [0, 0, 2000, 2000]).join(' '));
+    const root = sv('g', { id: 'gRoot' }); svg.append(root);
     if (S.board.web) {
-      bimg.classList.add('hidden');
-      svg.setAttribute('viewBox', S.board.view.join(' '));
       const gT = sv('g', { id: 'gTiles' });
       for (const t of S.board.tiles) {
         const im = sv('image', { href: `img/web/${t.id}.webp`, x: -500, y: -433, width: 1000, height: 866, transform: `translate(${t.x} ${t.y}) rotate(${t.rot * 60})` });
         gT.append(im);
       }
-      svg.append(gT);
+      root.append(gT);
     } else {
-      bimg.classList.remove('hidden');
-      svg.setAttribute('viewBox', '0 0 2000 2000');
-      for (const s of ['L', 'R']) if (!T.sections.includes(s)) svg.append(sv('polygon', { points: SHADE[s], class: 'shade' }));
+      root.append(sv('image', { href: 'img/board.jpg', x: 0, y: 0, width: 2000, height: 2000, preserveAspectRatio: 'none' }));
+      for (const s of ['L', 'R']) if (!T.sections.includes(s)) root.append(sv('polygon', { points: SHADE[s], class: 'shade' }));
     }
-    svg.append(sv('g', { id: 'gReg' })); svg.append(sv('g', { id: 'gLoc' })); svg.append(sv('g', { id: 'gSpy' })); svg.append(sv('g', { id: 'gOpt' }));
+    for (const id of ['gReg', 'gLoc', 'gSpy', 'gOpt']) root.append(sv('g', { id }));
   }
   function renderBoard() {
     const gReg = $('#gReg'), gLoc = $('#gLoc'), gSpy = $('#gSpy'), gOpt = $('#gOpt');
@@ -171,18 +244,21 @@ const UI = (() => {
         const g = sv('g', { class: 'token' });
         const cx = b.x0 - 58, cy = b.y1 + 6;
         g.append(sv('circle', { cx, cy, r: 20, fill: tk.owner != null ? S.players[tk.owner].hex : '#4b3a6b', stroke: '#e8dcff', 'stroke-width': 3 }));
-        const tx = sv('text', { x: cx, y: cy + 8, class: 'tokTxt' }); tx.textContent = tk.full ? '★' : '🕸'; g.append(tx);
+        const tx = sv('text', { x: cx, y: cy + 8, class: 'tokTxt' }); tx.textContent = tk.full ? '★' : ''; g.append(tx);
+        if (!tk.full) g.append(sv('image', { href: INF_URI, x: cx - 13, y: cy - 13, width: 26, height: 26 }));
         const tt = sv('title'); tt.textContent = `Жетон «${r.name}»: +1 влияние за ход; полный контроль: ${tk.pop ? popText(tk.pop) + ' в начале хода (Место Силы)' : `+${r.token.fullVp} ПО в конце хода`}`; g.append(tt);
         gReg.append(g);
       }
       // шпионы
       S.spies[rid].forEach((q, k) => {
-        const x = (b.x0 + b.x1) / 2 + (k - (S.spies[rid].length - 1) / 2) * 34, y = b.y1 + 44;
+        const x = (b.x0 + b.x1) / 2 + (k - (S.spies[rid].length - 1) / 2) * 54, y = b.y1 + 66;
         const key = rid + ':' + q;
-        const d = sv('path', { d: `M${x} ${y - 16} L${x + 13} ${y} L${x} ${y + 16} L${x - 13} ${y} Z`, fill: S.players[q].hex, class: 'spy' + (optSpy.has(key) ? ' opt' : '') });
+        const d = sv('path', { d: `M${x} ${y - 30} L${x + 24} ${y} L${x} ${y + 30} L${x - 24} ${y} Z`, fill: S.players[q].hex, class: 'spy' + (optSpy.has(key) ? ' opt' : '') });
         const tt = sv('title'); tt.textContent = `Шпион: ${S.players[q].name}`; d.append(tt);
         if (optSpy.has(key)) d.onclick = () => answer(optSpy.get(key));
         gSpy.append(d);
+        gSpy.append(sv('path', { d: `M${x - 13} ${y} Q${x} ${y - 12} ${x + 13} ${y} Q${x} ${y + 12} ${x - 13} ${y} Z`, class: 'spyEye' }));
+        gSpy.append(sv('circle', { cx: x, cy: y, r: 4.5, fill: S.players[q].hex, 'pointer-events': 'none' }));
       });
     }
     for (const id of T.act) {
@@ -213,11 +289,12 @@ const UI = (() => {
   }
   function renderPlayers() {
     const box = $('#players'); box.innerHTML = '';
+    box.style.setProperty('--pc', S.players.length === 3 ? 3 : 2);
     for (const P of S.players) {
       const sc = scoreOf(P.idx);
       const toks = Object.keys(S.tokens).filter(r => S.tokens[r].owner === P.idx).map(r => REG[r].name + (S.tokens[r].full ? '★' : '')).join(', ');
       const d = el('div', { class: 'pl' + (P.idx === S.cur ? ' cur' : '') });
-      d.innerHTML = `<div class="plTop"><span class="sw" style="background:${P.hex}"></span><b>${P.name}</b>${P.bot ? ' <span class="tag">бот</span>' : ''}${P.idx === S.first ? ' <span class="tag">1-й</span>' : ''}
+      d.innerHTML = `<div class="plTop"><span class="sw" style="background:${P.hex}"></span><b>${P.name}</b>${P.bot ? ` <span class="tag">${LEVEL_RU[P.level] || 'бот'}</span>` : ''}${P.idx === S.first ? ' <span class="tag">1-й</span>' : ''}
         <span class="vpTotal" title="Очки, если игра закончится сейчас">≈ ${sc.total} ПО</span></div>
         <div class="plStats">
           <span title="Отряды в казармах">🛡 ${P.barracks}</span>
@@ -229,7 +306,7 @@ const UI = (() => {
           ${S.decks.includes('arachnids') ? `<a class="web" title="Паутина">🕷 ${P.web.length}</a>` : ''}
           ${S.board.web ? `<span title="Камни Силы">◆ ${P.stones}</span>` : ''}
           ${S.modules.gems ? `<span title="Камни: синие / красные / фиолетовые">💎 ${P.gems.blue}/${P.gems.red}/${P.gems.purple}</span>` : ''}
-        </div>${toks ? `<div class="plToks">🕸 ${toks}</div>` : ''}`;
+        </div>${toks ? `<div class="plToks">${INF} ${toks}</div>` : ''}`;
       d.querySelector('.inner').onclick = () => showZone(`Внутренний круг: ${P.name}`, P.inner);
       const wb = d.querySelector('.web'); if (wb) wb.onclick = () => showZone(`Паутина: ${P.name}`, P.web);
       box.append(d);
@@ -278,19 +355,19 @@ const UI = (() => {
     bE.disabled = !mine; bA.disabled = !mine || !P.hand.length;
     const gb = $('#gems'); gb.innerHTML = '';
     if (S.modules.gems && !P.bot) for (const g of ['blue', 'red', 'purple']) if (P.gems[g]) {
-      const b = el('button', { class: 'gemBtn ' + g, title: 'Потратить камень' }, `💎×${P.gems[g]} <small>${g === 'blue' ? '+1⚔' : g === 'red' ? '+1🕸' : '+1⚔ +1🕸'}</small>`);
+      const b = el('button', { class: 'gemBtn ' + g, title: 'Потратить камень' }, `💎×${P.gems[g]} <small>${g === 'blue' ? '+1' + POW : g === 'red' ? '+1' + INF : '+1' + POW + ' +1' + INF}</small>`);
       b.disabled = !mine; b.onclick = () => { if (myTurn()) { spendGem(S.cur, g); render(); } };
       gb.append(b);
     }
     if (S.board.web && !P.bot) {
       const spots = stoneSpots(S.cur);
       if (spots.length && !S.flags.stoneTaken) {
-        const b = el('button', { class: 'gemBtn purple', title: 'Ваш отряд стоит на Камне Силы' }, 'Захватить камень <small>1⚔</small>');
+        const b = el('button', { class: 'gemBtn purple', title: 'Ваш отряд стоит на Камне Силы' }, `Взять камень <small>1${POW}</small>`);
         b.disabled = !mine || S.pool.p < 1; b.onclick = () => { if (myTurn()) { captureStone(S.cur, spots[0]); render(); } };
         gb.append(b);
       }
       const free = P.stones - P.stonesNew;
-      if (P.stones) for (const [k, t] of [['p', '+3⚔'], ['i', '+3🕸']]) {
+      if (P.stones) for (const [k, t] of [['p', '+3' + POW], ['i', '+3' + INF]]) {
         const b = el('button', { class: 'gemBtn', title: free ? 'Потратить Камень Силы' : 'Камень нельзя тратить в ход захвата' }, `◆×${P.stones} <small>${t}</small>`);
         b.disabled = !mine || !free; b.onclick = () => { if (myTurn()) { spendStone(S.cur, k); render(); } };
         gb.append(b);
@@ -304,8 +381,9 @@ const UI = (() => {
     for (const u of S.played) pl.append(cardImg(u, 'pd'));
     const pr = $('#prompt');
     if (pending && pending.req.kind === 'board') {
-      pr.innerHTML = `<span class="ptext">${pending.req.text}</span>`;
-      if (pending.req.optional) pr.append(el('button', { class: 'skip', onclick: () => answer(null) }, 'Пропустить'));
+      const series = pending.req.purpose === 'deploy' && !pending.req.card;   // «Отправить отряд» за силу — подряд
+      pr.innerHTML = `<span class="ptext">${pending.req.text}${series ? ` <span class="dim">· силы хватит на ${S.pool.p}</span>` : ''}</span>`;
+      if (pending.req.optional) pr.append(el('button', { class: 'skip', onclick: () => answer(null) }, series ? 'Готово' : 'Пропустить'));
       pr.classList.add('active');
     } else if (S.phase === 'turn' && !P.bot && !busy && !pending) {
       pr.innerHTML = '<span class="ptext dim">Сыграйте карты с руки, нанимайте слуг на рынке, тратьте силу на действия.</span>'; pr.classList.remove('active');
@@ -314,16 +392,32 @@ const UI = (() => {
   }
   function render() {
     if (!S) return;
-    renderBoard(); renderPlayers(); renderMarket(); renderTurn();
+    renderBoard(); renderPlayers(); renderMarket(); renderTurn(); updTabs();
     // карта под курсором могла исчезнуть после перерисовки
     const under = document.elementFromPoint(mouse.x, mouse.y);
     if (!under || !under.dataset || !under.dataset.cid) hideZoom();
   }
-  function onLog(msg) {
+  function onLog(msg, replaceLast) {
     const box = $('#log'); if (!box) return;
+    if (replaceLast && box.lastChild) { box.lastChild.innerHTML = msg; return; }
     box.append(el('div', { class: 'lg' }, msg));
     while (box.children.length > 300) box.firstChild.remove();
     box.scrollTop = box.scrollHeight;
+    if (tab !== 'log') { logNew++; updTabs(); }
+  }
+  // ---------- вкладки «Игра» / «Журнал» ----------
+  let tab = 'game', logNew = 0;
+  function setTab(t) {
+    tab = t;
+    $('#paneGame').classList.toggle('hidden', t !== 'game'); $('#paneLog').classList.toggle('hidden', t !== 'log');
+    $('#tabGame').classList.toggle('on', t === 'game'); $('#tabLog').classList.toggle('on', t === 'log');
+    if (t === 'log') { logNew = 0; $('#log').scrollTop = $('#log').scrollHeight; }
+    updTabs();
+  }
+  function updTabs() {
+    $('#logNew').textContent = logNew ? `+${logNew}` : '';
+    // пока открыт журнал, «Игра» подсвечивается, если ждут вашего действия
+    $('#tabGame').classList.toggle('attn', !!S && (myTurn() || !!pending));
   }
 
   // ---------- действия человека ----------
@@ -336,7 +430,11 @@ const UI = (() => {
   function doBuy(b) { if (S.pool.i < b.cost) { flash('Не хватает влияния'); return; } run(async () => buy(S.cur, b)); }
   function flash(t) { const f = $('#flash'); f.textContent = t; f.classList.add('show'); setTimeout(() => f.classList.remove('show'), 1400); }
   function bindButtons() {
-    $('#bDeploy').onclick = () => myTurn() && run(() => actDeploy(S.cur));
+    // отряды выставляются подряд, пока хватает силы; «Готово» — закончить
+    $('#bDeploy').onclick = () => myTurn() && run(async () => {
+      do { const p0 = S.pool.p; await actDeploy(S.cur); if (S.pool.p === p0) break; render(); }
+      while (S.pool.p >= 1 && S.players[S.cur].barracks > 0 && S.phase === 'turn');
+    });
     $('#bKill').onclick = () => myTurn() && run(() => actAssassinate(S.cur));
     $('#bSpy').onclick = () => myTurn() && run(() => actReturnSpy(S.cur));
     $('#bAll').onclick = () => myTurn() && run(async () => {
@@ -354,6 +452,8 @@ const UI = (() => {
       busy = false; render();
     };
     $('#bRules').onclick = showRules;
+    $('#tabGame').onclick = () => setTab('game');
+    $('#tabLog').onclick = () => setTab('log');
     $('#bMenu').onclick = async () => { if (await confirmBox('Выйти в меню? Текущая партия будет потеряна.')) location.reload(); };
   }
   async function humanTurn() {
@@ -446,10 +546,12 @@ const UI = (() => {
   }
   function confirmBox(text) {
     return new Promise(res => {
-      const m = openModal();
+      const m = openModal(); m.classList.add('confirm');
       m.append(el('h3', {}, text));
-      m.append(el('button', { class: 'opt', onclick: () => { closeModal(); res(true); } }, 'Да'));
-      m.append(el('button', { class: 'skip', onclick: () => { closeModal(); res(false); } }, 'Отмена'));
+      const row = el('div', { class: 'brow end' });
+      row.append(el('button', { class: 'skip', onclick: () => { closeModal(); res(false); } }, 'Отмена'));
+      row.append(el('button', { class: 'opt', onclick: () => { closeModal(); res(true); } }, 'Да'));
+      m.append(row);
     });
   }
   function showScores() {
@@ -481,7 +583,7 @@ const UI = (() => {
       <p><b>Фанатские дополнения.</b> <i>Осада</i> и <i>Юголоты</i> — новые колоды рынка; <i>Паукообразные</i> добавляют паутину игрока (карты в ней считаются колодой в конце игры и усиливают пауков по аспектам) и Отравленных слуг (−1 ПО, избавиться — вернуть своего шпиона или 2 своих отряда из региона).
       <i>Места Силы</i> — другие бонусы полного контроля на жетонах (в начале хода). <i>Камни Тьмы</i> — под белыми отрядами лежат камни: уничтожив отряд, можно вернуть его в запас и забрать камень (+1 сила / +1 влияние) или взять в трофеи, убрав камень.
       <i>Демоническая паутина</i> — поле из гексов: камни силы ◆ на тупиках маршрутов захватываются отрядом за 1 силу (1 за ход) и тратятся со следующего хода на +3 силы или +3 влияния.</p>
-      <p><b>Подсказки</b>: поле приближается колесом мыши или кнопками ＋/－ справа сверху и перетаскивается мышью; ⤢ — показать всё поле. Наведите курсор на карту — она увеличится; на регион — увидите расклад сил. Значок 👑 у игрока — посмотреть внутренний круг.</p></div>`;
+      <p><b>Подсказки</b>: поле приближается колесом мыши или кнопками ＋/－ справа сверху и перетаскивается мышью; ⤢ — показать всё поле. Вращение — как камера в стратегиях: зажмите ⟲/⟳ или клавиши Q/E, либо тяните поле правой (средней) кнопкой мыши. «Отправить отряд» выставляет отряды подряд, пока хватает силы («Готово» — закончить). Вкладка «Журнал» сверху — история партии. Сложность ботов выбирается в меню: лёгкие ошибаются и тратят не всю силу, тяжёлые следят за лидером и реже размениваются на убийства. Наведите курсор на карту — она увеличится; на регион — увидите расклад сил. Значок 👑 у игрока — посмотреть внутренний круг.</p></div>`;
     m.append(el('button', { class: 'skip', onclick: closeModal }, 'Закрыть'));
   }
 

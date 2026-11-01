@@ -5,10 +5,29 @@ const AI = (() => {
   const STARTERS = new Set(['Знать', 'Солдат']);
   const DEVOUR_HAND = new Set(['Пожиратель разума', 'Глабрезу', 'Марилит', 'Оркус', 'Балор', 'Демогоргон', 'Суккуб', 'Умертвие']);
 
+  // уровни сложности: noise — случайный разброс оценок, blunder — шанс выбрать случайный вариант,
+  // waste — шанс бросить тратить силу (остаток сгорает), rival — насколько учитывать успехи сильнейшего соперника,
+  // killBias — множитель пользы убийства против выставления отрядов, promoW — ценность повышения слуги,
+  // rush — отстающий не выставляет последний отряд (это закончило бы игру). Веса подобраны прогоном ботов (tools/sim.py, LEVELS, HARD)
+  const LV = {
+    easy:   { noise: 4,   blunder: 0.4, waste: 0.3, rival: 0 },
+    normal: { noise: 0.3, blunder: 0,   waste: 0,   rival: 0 },
+    hard:   { noise: 0.05, blunder: 0,  waste: 0,   rival: 1, killBias: 0.6, promoW: 3, rush: true },
+  };
+  const lv = p => LV[S.players[p].level] || LV.normal;
+  const jitter = p => Math.random() * lv(p).noise;
+
   function lateGame() { return S.mdeck.length < 30 || S.players.some(P => P.barracks < 12); }
 
-  // ценность позиции на поле для игрока p
+  // ценность позиции на поле для игрока p; тяжёлый бот вычитает позицию сильнейшего соперника
   function V(p) {
+    const r = lv(p).rival;
+    if (!r) return V0(p);
+    let m = -Infinity;
+    for (const q of S.players) if (q.idx !== p) m = Math.max(m, V0(q.idx));
+    return V0(p) - r * m;
+  }
+  function V0(p) {
     let v = 0;
     for (const rid of T.actReg) {
       const r = REG[rid], c = controller(rid);
@@ -78,7 +97,7 @@ const AI = (() => {
     if (v.supplantWhiteAny) s += enemyTroopLocs(p, { white: true, anywhere: true }).length ? 4.2 : 0;
     if (v.spy) s += v.spy * 1.6;
     if (v.draw) s += v.draw * 1.7;
-    if (v.promote) s += v.promote * 2.2;
+    if (v.promote) s += v.promote * (lv(p).promoW || 2.2);
     if (v.ret) s += 1.8 * Math.min(v.ret, 2);
     if (v.vp) s += v.vp;
     if (v.recruit) s += v.recruit * 2.5;
@@ -90,7 +109,7 @@ const AI = (() => {
     if (v.web) s += 1.4;
     if (v.troops) s += v.troops * 0.8;
     if (/^Вернуть/.test(label)) s -= 0.8;
-    return s + Math.random() * 0.3;
+    return s + jitter(p);
   }
 
   function resolveBoard(p, req) {
@@ -122,7 +141,9 @@ const AI = (() => {
       case 'killRegion': scored = opts.map(o => ({ o, s: REG[o.id].locs.filter(l => S.occ[l] != null && S.occ[l] !== p).length + Math.random() })); break;
       default: scored = opts.map(o => ({ o, s: Math.random() }));
     }
+    if (lv(p).noise) for (const x of scored) x.s += jitter(p);
     scored.sort((a, b) => b.s - a.s);
+    if (Math.random() < lv(p).blunder) return opts[Math.floor(Math.random() * opts.length)];
     // необязательные действия с отрицательной пользой можно пропустить
     if (req.optional && scored[0].s < -1.5 && req.purpose !== 'deploy') return null;
     return scored[0].o;
@@ -134,6 +155,7 @@ const AI = (() => {
     let u;
     switch (req.purpose) {
       case 'promote': {
+        if (Math.random() < lv(p).blunder) return [ids[Math.floor(Math.random() * ids.length)]];
         const early = !lateGame();
         u = pickBy(x => { const d = def(x); if (d.name === 'Безумный изгой') return 9; return d.vpInner - playValue(d) * (early ? 1.2 : 0.2); });
         return [u];
@@ -169,6 +191,7 @@ const AI = (() => {
 
   function nextCard(p) {
     const H = S.players[p].hand;
+    if (Math.random() < lv(p).blunder) return H[Math.floor(Math.random() * H.length)];
     const hasJunk = H.some(u => keepValue(u) <= 1);
     const prio = u => {
       const d = def(u);
@@ -185,7 +208,7 @@ const AI = (() => {
   }
   function buyScore(p, b) {
     const d = def(b.uid);
-    return d.cost * 1.0 + d.vpDeck * (lateGame() ? 1.0 : 0.4) + d.vpInner * 0.2 + Math.random() * 0.4;
+    return d.cost * 1.0 + d.vpDeck * (lateGame() ? 1.0 : 0.4) + d.vpInner * 0.2 + Math.random() * 0.4 + jitter(p);
   }
   async function pause() { UI.render(); if (S.botDelay) await sleep(S.botDelay); }
 
@@ -207,18 +230,21 @@ const AI = (() => {
       if (P.barracks === 0) { await actDeploy(p); await pause(); continue; }
       const deps = emptyDeployLocs(p).map(id => gainDeploy(p, id)).sort((a, b) => b - a);
       const dep3 = (deps[0] || 0) + (deps[1] || 0) * 0.8 + (deps[2] || 0) * 0.6;
+      if (Math.random() < lv(p).waste) break;
       if (S.pool.p >= 3) {
         const kills = enemyTroopLocs(p).map(id => gainKill(p, id, false));
         const bestKill = kills.length ? Math.max(...kills) : -99;
         const spies = []; for (const r of T.actReg) for (const q of S.spies[r]) if (q !== p && presenceRegion(p, r)) spies.push(gainReturn(p, { t: 'spy', rid: r, owner: q }));
         const bestSpy = spies.length ? Math.max(...spies) : -99;
-        if (bestKill >= dep3 && bestKill > 0.5 && bestKill >= bestSpy) { await actAssassinate(p); await pause(); continue; }
+        if (bestKill * (lv(p).killBias || 1) >= dep3 && bestKill > 0.5 && bestKill >= bestSpy) { await actAssassinate(p); await pause(); continue; }
         if (bestSpy > dep3 && bestSpy > 0.5) { await actReturnSpy(p); await pause(); continue; }
       }
       if (!deps.length) break;
+      // отстающий тяжёлый бот не выставляет последний отряд — это закончило бы игру
+      if (lv(p).rush && P.barracks === 1 && !S.endTriggered && estScore(p) < Math.max(...S.players.filter(q => q.idx !== p).map(q => estScore(q.idx)))) break;
       await actDeploy(p); await pause();
     }
   }
 
-  return { resolve, takeTurn, V };
+  return { resolve, takeTurn, V, LV };
 })();

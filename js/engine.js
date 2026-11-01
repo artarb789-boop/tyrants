@@ -136,7 +136,16 @@ function take(arr, x) { const i = arr.indexOf(x); if (i >= 0) arr.splice(i, 1); 
 const def = uid => CARDS[S.cards[uid]];
 const pn = p => `<b style="color:${S.players[p].hex === '#2a2730' ? '#b9b3c6' : S.players[p].hex}">${S.players[p].name}</b>`;
 const cn = uid => `«${def(uid).name}»`;
-function log(msg) { S.log.push(msg); if (S.log.length > 400) S.log.shift(); UI.onLog && UI.onLog(msg); }
+function log(msg) {
+  // строки игрока, пока разыгрывается его карта, дописываются в строку «играет …»
+  const m = S.logMerge, last = S.log.length - 1;
+  if (m && S.log[last] === m.line && msg.startsWith(m.pre)) {
+    const rest = msg.slice(m.pre.length).replace(/^:?\s*/, '');
+    m.line = S.log[last] = m.line.replace(/\.$/, '') + (m.n++ ? '; ' : ': ') + rest;
+    UI.onLog && UI.onLog(m.line, true); return;
+  }
+  S.log.push(msg); if (S.log.length > 400) S.log.shift(); UI.onLog && UI.onLog(msg);
+}
 
 // ---------- топология ----------
 function buildTopology(sections) {
@@ -173,7 +182,7 @@ function newGame(cfg) {
         decks: cfg.decks };
   T = buildTopology(sections);
   cfg.players.forEach((pc, i) => {
-    const P = { idx: i, name: pc.name, hex: pc.hex, house: pc.house, bot: !!pc.bot, deck: [], hand: [], discard: [], inner: [],
+    const P = { idx: i, name: pc.name, hex: pc.hex, house: pc.house, bot: !!pc.bot, level: pc.level || 'normal', deck: [], hand: [], discard: [], inner: [],
                 barracks: 40, spiesFree: 5, trophies: {}, vp: 0, web: [], gems: { blue: 0, red: 0, purple: 0 }, stones: 0, stonesNew: 0 };
     for (let k = 0; k < 7; k++) P.deck.push(mkCard(cidByName('Знать')));
     for (let k = 0; k < 3; k++) P.deck.push(mkCard(cidByName('Солдат')));
@@ -601,8 +610,10 @@ async function playCard(p, uid, src = 'hand') {
   if (src === 'hand') take(P.hand, uid);
   if (src !== 'inner') S.played.push(uid);
   log(`${pn(p)} играет ${cn(uid)}${src === 'market' ? ' с рынка' : src === 'inner' ? ' из внутреннего круга' : ''}.`);
-  const fx = EFFECTS[def(uid).name];
-  if (fx) await fx(ctxFor(p, uid)); else log(`(эффект ${cn(uid)} не реализован)`);
+  const fx = EFFECTS[def(uid).name], outer = S.logMerge;
+  S.logMerge = { pre: pn(p), line: S.log[S.log.length - 1], n: 0 };
+  try { if (fx) await fx(ctxFor(p, uid)); else log(`(эффект ${cn(uid)} не реализован)`); }
+  finally { S.logMerge = outer; }
 }
 
 // ---------- основные действия за ресурсы ----------
