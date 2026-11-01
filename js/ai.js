@@ -61,7 +61,7 @@ const AI = (() => {
   function playValue(d) { return STARTERS.has(d.name) ? 0.8 : d.name === 'Безумный изгой' ? -3 : (d.cost || 0); }
   function keepValue(uid) {
     const d = def(uid);
-    if (d.name === 'Безумный изгой') return -5;
+    if (d.name === 'Безумный изгой' || d.name === 'Отравленный слуга') return -5;
     if (d.name === 'Гримлок') return -2;
     if (d.name === 'Посол') return -1;
     return playValue(d);
@@ -86,6 +86,9 @@ const AI = (() => {
     if (v.discard) s += 0.8;
     if (v.devourThis) s -= 1.5;
     if (v.devourHand) s -= 0.5;
+    if (v.cleanse) s += 3;
+    if (v.web) s += 1.4;
+    if (v.troops) s += v.troops * 0.8;
     if (/^Вернуть/.test(label)) s -= 0.8;
     return s + Math.random() * 0.3;
   }
@@ -113,6 +116,8 @@ const AI = (() => {
       }
       case 'spy': scored = opts.map(o => ({ o, s: gainSpy(p, o.id, req.follow) })); break;
       case 'recall': scored = opts.map(o => ({ o, s: gainRecall(p, o.rid, req.follow) })); break;
+      case 'spyMoveTo': scored = opts.map(o => ({ o, s: -REG[o.id].locs.filter(l => S.occ[l] === req.owner).length - REG[o.id].vp * 0.1 + Math.random() * 0.1 })); break;
+      case 'ownTroopsRegion': scored = opts.map(o => ({ o, s: -REG[o.id].vp + Math.random() })); break;
       case 'recallForSpy': scored = opts.map(o => ({ o, s: gainRecall(p, o.rid) })); break;
       case 'killRegion': scored = opts.map(o => ({ o, s: REG[o.id].locs.filter(l => S.occ[l] != null && S.occ[l] !== p).length + Math.random() })); break;
       default: scored = opts.map(o => ({ o, s: Math.random() }));
@@ -138,6 +143,9 @@ const AI = (() => {
       case 'devourHand': u = pickBy(x => -keepValue(x)); return keepValue(u) <= 2.5 || min ? [u] : [];
       case 'devourMarket': u = pickBy(x => def(x).cost || 0); return [u];
       case 'devourInner': u = pickBy(x => -def(x).vpInner); return def(u).vpInner <= 2 || min ? [u] : [];
+      case 'webAdd': return [pickBy(x => -playValue(def(x)) + (def(x).name.includes('пауч') ? 1 : 0))];
+      case 'marketPromote': u = pickBy(x => def(x).vpInner - (def(x).cost || 0) * 0.3); return [u];
+      case 'peek': case 'topdeck': case 'copy':
       case 'recruit': case 'playMarket': case 'playInner': return [pickBy(x => (def(x).cost || 0) + def(x).vpDeck * 0.3 + Math.random() * 0.2)];
       default: return min ? [ids[0]] : [ids[0]];
     }
@@ -153,6 +161,7 @@ const AI = (() => {
     if (req.kind === 'player') return req.purpose === 'trophySource' ? req.options[0] : leader(req.options);
     if (req.kind === 'yesno') {
       if (req.purpose === 'devourThis') return true;
+      if (req.purpose === 'gem') return req.gem === 'purple' || !lateGame() && Math.random() < 0.3;
       return true;
     }
     return null;
@@ -164,6 +173,8 @@ const AI = (() => {
     const prio = u => {
       const d = def(u);
       if (d.name === 'Безумный изгой') return H.length > 1 && hasJunk ? 100 : -100;
+      if (d.name === 'Отравленный слуга') return 95;
+      if (/сыгранного на этом ходу|сыграли карты с 4|за каждый отдельный аспект|Скопируйте/.test(d.text)) return 8;
       if (DEVOUR_HAND.has(d.name)) return H.length > 1 ? 60 : 5;
       if (/фокусировка/.test(d.text)) return 10;
       if (/Возьмите|возьмите/.test(d.text)) return 50;
@@ -181,13 +192,18 @@ const AI = (() => {
   async function takeTurn(p) {
     const P = S.players[p];
     while (P.hand.length) { await playCard(p, nextCard(p)); await pause(); }
+    for (const g of ['purple', 'blue', 'red']) while (P.gems && P.gems[g]) spendGem(p, g);
+    while (P.stones - P.stonesNew > 0) spendStone(p, 'i');
     for (let guard = 0; guard < 20; guard++) {
       const opts = buyables(p).filter(b => b.cost <= S.pool.i);
       if (!opts.length) break;
       const best = opts.map(b => ({ b, s: buyScore(p, b) })).sort((a, c) => c.s - a.s)[0];
       buy(p, best.b); await pause();
     }
+    const grabStone = () => { const sp = stoneSpots(p); if (sp.length && S.pool.p >= 1 && !S.flags.stoneTaken) captureStone(p, sp[0]); };
+    grabStone();
     for (let guard = 0; guard < 40 && S.pool.p > 0; guard++) {
+      grabStone();
       if (P.barracks === 0) { await actDeploy(p); await pause(); continue; }
       const deps = emptyDeployLocs(p).map(id => gainDeploy(p, id)).sort((a, b) => b - a);
       const dep3 = (deps[0] || 0) + (deps[1] || 0) * 0.8 + (deps[2] || 0) * 0.6;

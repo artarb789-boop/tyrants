@@ -17,7 +17,7 @@ const UI = (() => {
   const myTurn = () => S && S.phase === 'turn' && !S.players[S.cur].bot && !busy && !pending;
 
   // ---------- настройка ----------
-  const setup = { n: 2, seats: [], decks: ['drow', 'dragons'], side: 'L', speed: 450 };
+  const setup = { n: 2, seats: [], decks: ['drow', 'dragons'], side: 'L', speed: 450, modules: { pop: false, gems: false } };
   function initSetup() {
     for (let i = 0; i < 4; i++) setup.seats.push({ name: i === 0 ? 'Игрок' : HOUSES[i].name, bot: i !== 0 });
     try { const s = JSON.parse(localStorage.getItem('tyrants.setup') || 'null'); if (s) Object.assign(setup, s); } catch (e) {}
@@ -39,11 +39,20 @@ const UI = (() => {
       box.append(r);
     }
     const dRow = el('div', { class: 'row wrap' }, '<span class="lbl">Колоды рынка (выберите 2):</span>');
-    for (const d of Object.keys(DECK_RU)) dRow.append(el('button', { class: 'pill' + (setup.decks.includes(d) ? ' on' : ''), onclick: () => {
+    const fRow = el('div', { class: 'row wrap' }, '<span class="lbl">Фанатские колоды:</span>');
+    for (const d of Object.keys(DECK_RU)) (FAN_DECKS.includes(d) ? fRow : dRow).append(el('button', { class: 'pill' + (setup.decks.includes(d) ? ' on' : ''), onclick: () => {
       if (setup.decks.includes(d)) setup.decks = setup.decks.filter(x => x !== d); else { setup.decks.push(d); if (setup.decks.length > 2) setup.decks.shift(); }
       renderSetup(); } }, DECK_RU[d]));
-    box.append(dRow);
-    if (setup.n === 3) {
+    box.append(dRow); box.append(fRow);
+    if (!setup.modules) setup.modules = { pop: false, gems: false };
+    const mRow = el('div', { class: 'row wrap' }, '<span class="lbl">Фанатские модули:</span>');
+    for (const [k, t, hint] of [['pop', 'Места Силы', 'другие бонусы полного контроля на жетонах'], ['gems', 'Камни Тьмы', 'камни под белыми отрядами: +1 сила / +1 влияние']])
+      mRow.append(el('button', { class: 'pill' + (setup.modules[k] ? ' on' : ''), title: hint, onclick: () => { setup.modules[k] = !setup.modules[k]; renderSetup(); } }, t));
+    box.append(mRow);
+    const bRow = el('div', { class: 'row wrap' }, '<span class="lbl">Поле:</span>');
+    for (const [v, t] of [['base', 'Классическое'], ['web', 'Демоническая паутина (гексы)']]) bRow.append(el('button', { class: 'pill' + ((setup.board || 'base') === v ? ' on' : ''), onclick: () => { setup.board = v; renderSetup(); } }, t));
+    box.append(bRow);
+    if (setup.n === 3 && setup.board !== 'web') {
       const sRow = el('div', { class: 'row' }, '<span class="lbl">Часть поля:</span>');
       for (const [v, t] of [['L', 'центр + левая'], ['R', 'центр + правая']]) sRow.append(el('button', { class: 'pill' + (setup.side === v ? ' on' : ''), onclick: () => { setup.side = v; renderSetup(); } }, t));
       box.append(sRow);
@@ -59,7 +68,7 @@ const UI = (() => {
   async function start() {
     try { localStorage.setItem('tyrants.setup', JSON.stringify(setup)); } catch (e) {}
     const players = setup.seats.slice(0, setup.n).map((s, i) => ({ name: s.name.trim() || HOUSES[i].name, bot: s.bot, hex: HOUSES[i].hex, house: HOUSES[i].name }));
-    newGame({ players, decks: setup.decks, side: setup.side, botDelay: setup.speed });
+    newGame({ players, decks: setup.decks, side: setup.side, botDelay: setup.speed, modules: setup.modules, board: setup.board || 'base' });
     $('#setup').classList.add('hidden'); $('#game').classList.remove('hidden');
     $('#log').innerHTML = ''; S.log.forEach(m => onLog(m));
     buildBoardStatic(); render();
@@ -79,7 +88,21 @@ const UI = (() => {
   }
   function buildBoardStatic() {
     const svg = $('#svg'); svg.innerHTML = '';
-    for (const s of ['L', 'R']) if (!T.sections.includes(s)) svg.append(sv('polygon', { points: SHADE[s], class: 'shade' }));
+    const bimg = $('#board img');
+    if (S.board.web) {
+      bimg.classList.add('hidden');
+      svg.setAttribute('viewBox', S.board.view.join(' '));
+      const gT = sv('g', { id: 'gTiles' });
+      for (const t of S.board.tiles) {
+        const im = sv('image', { href: `img/web/${t.id}.webp`, x: -500, y: -433, width: 1000, height: 866, transform: `translate(${t.x} ${t.y}) rotate(${t.rot * 60})` });
+        gT.append(im);
+      }
+      svg.append(gT);
+    } else {
+      bimg.classList.remove('hidden');
+      svg.setAttribute('viewBox', '0 0 2000 2000');
+      for (const s of ['L', 'R']) if (!T.sections.includes(s)) svg.append(sv('polygon', { points: SHADE[s], class: 'shade' }));
+    }
     svg.append(sv('g', { id: 'gReg' })); svg.append(sv('g', { id: 'gLoc' })); svg.append(sv('g', { id: 'gSpy' })); svg.append(sv('g', { id: 'gOpt' }));
   }
   function renderBoard() {
@@ -104,7 +127,7 @@ const UI = (() => {
         const cx = b.x0 - 58, cy = b.y1 + 6;
         g.append(sv('circle', { cx, cy, r: 20, fill: tk.owner != null ? S.players[tk.owner].hex : '#4b3a6b', stroke: '#e8dcff', 'stroke-width': 3 }));
         const tx = sv('text', { x: cx, y: cy + 8, class: 'tokTxt' }); tx.textContent = tk.full ? '★' : '🕸'; g.append(tx);
-        const tt = sv('title'); tt.textContent = `Жетон «${r.name}»: +1 влияние за ход; полный контроль: +${r.token.fullVp} ПО в конце хода`; g.append(tt);
+        const tt = sv('title'); tt.textContent = `Жетон «${r.name}»: +1 влияние за ход; полный контроль: ${tk.pop ? popText(tk.pop) + ' в начале хода (Место Силы)' : `+${r.token.fullVp} ПО в конце хода`}`; g.append(tt);
         gReg.append(g);
       }
       // шпионы
@@ -123,6 +146,8 @@ const UI = (() => {
       const c = sv('circle', { cx: l.x, cy: l.y, r: 21, class: 'loc' + (v == null ? ' empty' : v === 'W' ? ' white' : ' troop') });
       if (v != null && v !== 'W') { c.setAttribute('fill', S.players[v].hex); c.setAttribute('stroke', lightHex(S.players[v].hex)); }
       gLoc.append(c);
+      if (S.stones[id]) gLoc.append(sv('path', { d: `M${l.x} ${l.y - 40} l12 14 l-12 14 l-12 -14 Z`, class: 'stone' }));
+      if (S.gems[id] && v === 'W') gLoc.append(sv('circle', { cx: l.x + 16, cy: l.y - 16, r: 9, class: 'gem ' + S.gems[id] }));
       if (v === 'W') { gLoc.append(sv('path', { d: `M${l.x - 9} ${l.y - 9} L${l.x + 9} ${l.y + 9} M${l.x + 9} ${l.y - 9} L${l.x - 9} ${l.y + 9}`, class: 'wx' })); }
       if (isOpt) {
         const o = sv('circle', { cx: l.x, cy: l.y, r: 27, class: 'optRing' });
@@ -156,8 +181,12 @@ const UI = (() => {
           <span title="Жетоны ПО">🏅 ${P.vp}</span>
           <span title="Колода / сброс / рука">🂠 ${P.deck.length}/${P.discard.length}/${P.hand.length}</span>
           <a class="inner" title="Внутренний круг">👑 ${P.inner.length}</a>
+          ${S.decks.includes('arachnids') ? `<a class="web" title="Паутина">🕷 ${P.web.length}</a>` : ''}
+          ${S.board.web ? `<span title="Камни Силы">◆ ${P.stones}</span>` : ''}
+          ${S.modules.gems ? `<span title="Камни: синие / красные / фиолетовые">💎 ${P.gems.blue}/${P.gems.red}/${P.gems.purple}</span>` : ''}
         </div>${toks ? `<div class="plToks">🕸 ${toks}</div>` : ''}`;
       d.querySelector('.inner').onclick = () => showZone(`Внутренний круг: ${P.name}`, P.inner);
+      const wb = d.querySelector('.web'); if (wb) wb.onclick = () => showZone(`Паутина: ${P.name}`, P.web);
       box.append(d);
     }
   }
@@ -166,7 +195,7 @@ const UI = (() => {
     const canBuy = myTurn();
     S.market.forEach((u, i) => {
       if (u == null) { box.append(el('div', { class: 'card slot' })); return; }
-      const c = def(u).cost;
+      const c = costOf(u);
       const im = cardImg(u, 'mk' + (canBuy && S.pool.i >= c ? ' afford' : ''), () => { if (myTurn()) doBuy({ uid: u, src: 'market', slot: i, cost: c }); });
       box.append(im);
     });
@@ -181,12 +210,13 @@ const UI = (() => {
       w.append(el('div', { class: 'pileN' }, `${label}: ${uids.length}`));
       sup.append(w);
     };
-    pile(S.supply.priest, 2, 'priest', 'Жрицы');
-    pile(S.supply.guard, 3, 'guard', 'Стражи');
+    pile(S.supply.priest, S.supply.priest.length ? costOf(S.supply.priest[0]) : 2, 'priest', 'Жрицы');
+    pile(S.supply.guard, S.supply.guard.length ? costOf(S.supply.guard[0]) : 3, 'guard', 'Стражи');
     pile(S.supply.madman, null, null, 'Изгои');
+    if (S.decks.includes('arachnids')) pile(S.supply.poison, null, null, 'Отравленные');
     const dv = el('div', { class: 'pile' });
     if (S.devoured.length) {
-      const u = S.devoured[S.devoured.length - 1], c = def(u).cost;
+      const u = S.devoured[S.devoured.length - 1], c = costOf(u);
       const buyable = S.flags.devouredBuy && c != null;
       dv.append(cardImg(u, 'sp dim' + (buyable ? ' afford' : ''), () => { if (myTurn() && buyable) doBuy({ uid: u, src: 'devoured', cost: c }); }));
     } else dv.append(el('div', { class: 'card sp slot' }));
@@ -201,6 +231,26 @@ const UI = (() => {
     const bD = $('#bDeploy'), bK = $('#bKill'), bS = $('#bSpy'), bE = $('#bEnd'), bA = $('#bAll');
     bD.disabled = !mine || S.pool.p < 1; bK.disabled = !mine || S.pool.p < 3; bS.disabled = !mine || S.pool.p < 3;
     bE.disabled = !mine; bA.disabled = !mine || !P.hand.length;
+    const gb = $('#gems'); gb.innerHTML = '';
+    if (S.modules.gems && !P.bot) for (const g of ['blue', 'red', 'purple']) if (P.gems[g]) {
+      const b = el('button', { class: 'gemBtn ' + g, title: 'Потратить камень' }, `💎×${P.gems[g]} <small>${g === 'blue' ? '+1⚔' : g === 'red' ? '+1🕸' : '+1⚔ +1🕸'}</small>`);
+      b.disabled = !mine; b.onclick = () => { if (myTurn()) { spendGem(S.cur, g); render(); } };
+      gb.append(b);
+    }
+    if (S.board.web && !P.bot) {
+      const spots = stoneSpots(S.cur);
+      if (spots.length && !S.flags.stoneTaken) {
+        const b = el('button', { class: 'gemBtn purple', title: 'Ваш отряд стоит на Камне Силы' }, 'Захватить камень <small>1⚔</small>');
+        b.disabled = !mine || S.pool.p < 1; b.onclick = () => { if (myTurn()) { captureStone(S.cur, spots[0]); render(); } };
+        gb.append(b);
+      }
+      const free = P.stones - P.stonesNew;
+      if (P.stones) for (const [k, t] of [['p', '+3⚔'], ['i', '+3🕸']]) {
+        const b = el('button', { class: 'gemBtn', title: free ? 'Потратить Камень Силы' : 'Камень нельзя тратить в ход захвата' }, `◆×${P.stones} <small>${t}</small>`);
+        b.disabled = !mine || !free; b.onclick = () => { if (myTurn()) { spendStone(S.cur, k); render(); } };
+        gb.append(b);
+      }
+    }
     const v = viewer();
     const hand = $('#hand'); hand.innerHTML = '';
     $('#handTitle').textContent = v == null ? 'Рука' : v === S.cur ? 'Ваша рука' : `Рука: ${S.players[v].name} (ждёт хода)`;
@@ -383,6 +433,9 @@ const UI = (() => {
       <p><b>Конец хода</b>: повышение слуг во внутренний круг, ПО за жетоны, сброс сыгранных карт и руки, добор 5 карт.</p>
       <p><b>Конец игры</b> — кто-то отправил последний отряд или опустела колода рынка; раунд доигрывается.
       Подсчёт: ПО регионов под контролем, +2 за полный контроль, 1 ПО за каждый отряд в трофейном зале, ПО карт колоды (левое число) и внутреннего круга (правое число), жетоны ПО.</p>
+      <p><b>Фанатские дополнения.</b> <i>Осада</i> и <i>Юголоты</i> — новые колоды рынка; <i>Паукообразные</i> добавляют паутину игрока (карты в ней считаются колодой в конце игры и усиливают пауков по аспектам) и Отравленных слуг (−1 ПО, избавиться — вернуть своего шпиона или 2 своих отряда из региона).
+      <i>Места Силы</i> — другие бонусы полного контроля на жетонах (в начале хода). <i>Камни Тьмы</i> — под белыми отрядами лежат камни: уничтожив отряд, можно вернуть его в запас и забрать камень (+1 сила / +1 влияние) или взять в трофеи, убрав камень.
+      <i>Демоническая паутина</i> — поле из гексов: камни силы ◆ на тупиках маршрутов захватываются отрядом за 1 силу (1 за ход) и тратятся со следующего хода на +3 силы или +3 влияния.</p>
       <p><b>Подсказки</b>: наведите курсор на карту — она увеличится; на регион — увидите расклад сил. Значок 👑 у игрока — посмотреть внутренний круг.</p></div>`;
     m.append(el('button', { class: 'skip', onclick: closeModal }, 'Закрыть'));
   }

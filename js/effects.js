@@ -22,7 +22,7 @@ async function opponentDiscards(ctx) {
 }
 async function madmanTo(ctx, filter) {
   const t = await chooseOpponent(ctx, filter, 'Выберите противника: он получит Безумного изгоя', 'madman');
-  if (t != null) giveMadman(t);
+  if (t != null) await giveMadman(t);
 }
 // вернуть на поле отряды из трофейных залов
 async function redeployTrophies(ctx, n, sources, kind, anywhere) {
@@ -168,7 +168,7 @@ const EFFECTS = {
   'Огремоч': async ctx => { gain(ctx, 0, 2); eot(ctx); if (hasFocus(ctx, 'ambition')) eot(ctx); },
 
   // ---- Демоны ----
-  'Гуль': async ctx => { gain(ctx, 2); madmanClockwise(others(ctx.p)); },
+  'Гуль': async ctx => { gain(ctx, 2); await madmanClockwise(others(ctx.p)); },
   'Пожиратель разума': async ctx => {
     if (!await devourFromHand(ctx, 'Пожиратель разума: поглотите карту с руки, чтобы выбрать эффект (или пропустите)')) return;
     await chooseOne(ctx, [
@@ -192,7 +192,7 @@ const EFFECTS = {
     }
     await madmanTo(ctx, q => near.has(q));
   },
-  'Дерро': async ctx => { await supplant(ctx, { white: true, anywhere: true }); giveMadman(ctx.p); },
+  'Дерро': async ctx => { await supplant(ctx, { white: true, anywhere: true }); await giveMadman(ctx.p, false); },
   'Эттин': ctx => chooseOne(ctx, [
     { label: 'Отправить 3 отряда', v: { deploy: 3 }, fn: () => deploy(ctx, 3) },
     { label: 'Уничтожить 2 белых отряда', v: { killWhite: 2 }, fn: () => assassinate(ctx, 2, { white: true }) }]),
@@ -200,7 +200,7 @@ const EFFECTS = {
   'Демогоргон': async ctx => {
     if (!await devourFromHand(ctx, 'Демогоргон: поглотите карту с руки → вытесните 2 белых отряда, противники получают по 2 изгоя')) return;
     await supplant(ctx, { white: true }); await supplant(ctx, { white: true });
-    madmanClockwise(others(ctx.p), 2);
+    await madmanClockwise(others(ctx.p), 2);
   },
   'Ночная карга': ctx => spyOr(ctx, 'взять 2 карты', async () => draw(ctx, 2), { draw: 2 }),
   'Шакальник': ctx => spyOr(ctx, '+2 силы и +2 влияния', async () => gain(ctx, 2, 2), { p: 2, i: 2 }),

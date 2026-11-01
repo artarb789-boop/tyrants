@@ -102,6 +102,11 @@ img.playable { cursor: pointer; outline: 2px solid #7ee08a; outline-offset: 1px;
 .fromRing { fill: none; stroke: #ff5bd2; stroke-width: 7; pointer-events: none; }
 .spy { stroke: #fff; stroke-width: 3; filter: drop-shadow(0 0 3px #000); }
 .spy.opt { stroke: var(--gold); stroke-width: 6; cursor: pointer; animation: pulse 0.8s infinite alternate; }
+.stone { fill: #ffd75a; stroke: #3a2600; stroke-width: 3; pointer-events: none; filter: drop-shadow(0 0 4px #000); }
+.gem { stroke: #fff; stroke-width: 3; pointer-events: none; }
+.gem.blue { fill: #3f7ff2; } .gem.red { fill: #e0303a; } .gem.purple { fill: #a347ff; }
+.gemBtn.blue { border-color: #3f7ff2; } .gemBtn.red { border-color: #e0303a; } .gemBtn.purple { border-color: #a347ff; }
+#gems { display: inline-flex; gap: 6px; }
 .token text, .tokTxt { fill: #fff; font-size: 22px; text-anchor: middle; pointer-events: none; }
 @keyframes pulse { from { opacity: .55; } to { opacity: 1; } }
 

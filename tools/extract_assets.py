@@ -6,8 +6,12 @@ import sys, os, re, zipfile, tempfile, collections
 import pymupdf, cv2, numpy as np
 
 ROOT = os.path.join(os.path.dirname(os.path.abspath(__file__)), '..')
-CARD_PDFS = ['Карты Базы (1) начальные колоды.pdf', 'Карты Базы (2) колоды Элементалей и Демонов.pdf', 'Карты Допа (3) колоды Аберраций и Нежити.pdf']
+CARD_PDFS = [  # базовые листы карт
+   'Карты Базы (1) начальные колоды.pdf', 'Карты Базы (2) колоды Элементалей и Демонов.pdf', 'Карты Допа (3) колоды Аберраций и Нежити.pdf']
 BOARD_PDF = 'Поле (целиком).pdf'
+FAN_PDFS = {'Карты Фан.Допа (4) колоды Осады и Юголотов.pdf': ['siege', 'yugoloths'], 'Карты Фан.Допа (5) колода Паукообразных.pdf': ['arachnids']}
+WEB_PDF = 'Демоническая паутина.pdf'
+WEB_NAMES = 'A1 A2 A3 A4 A5 A6 A7 A8 A9 B1 B2 B3 B4 B5 B6 C1 C2 C3 C4 C5 C6 C7 C8'.split()
 DECKS = ['drow', 'dragons', 'elementals', 'demons', 'aberrations', 'undead']
 XS = [30, 208, 387, 565]; YS = [47, 296, 546, 795]  # сетка 3x3 карт на листе
 
@@ -74,6 +78,43 @@ def main():
                 cv2.imwrite(os.path.join(ROOT, 'img', 'cards', cid + '.webp'), cv2.cvtColor(a, cv2.COLOR_RGB2BGR), [cv2.IMWRITE_WEBP_QUALITY, 82])
             doc.close()
         print('карт:', len(seen), dict(per_deck))
+        # карты фанатских дополнений: колоды по сбросу нумерации n/40, Отравленный слуга — отдельно
+        for fname, decks in FAN_PDFS.items():
+            if not os.path.exists(os.path.join(tmp, fname)): print('нет файла', fname); continue
+            doc = pymupdf.open(os.path.join(tmp, fname)); di, prev = -1, 999
+            for pn, (i, j), name, label, idx in card_cells(doc):
+                if name != 'Отравленный слуга' and idx is None: continue  # титульные и сюжетные карты
+                if name == 'Отравленный слуга': deck = 'poison'
+                else:
+                    if idx is not None and idx < prev: di += 1
+                    if idx is not None: prev = idx
+                    deck = decks[di]
+                if (deck, name) in seen: continue
+                seen.add((deck, name)); per_deck[deck] += 1
+                cid = f'{deck}_{per_deck[deck]:02d}'
+                pix = doc[pn].get_pixmap(dpi=144, clip=pymupdf.Rect(XS[j], YS[i], XS[j + 1], YS[i + 1]))
+                a = np.frombuffer(pix.samples, dtype=np.uint8).reshape(pix.height, pix.width, pix.n)[:, :, :3]
+                cv2.imwrite(os.path.join(ROOT, 'img', 'cards', cid + '.webp'), cv2.cvtColor(a, cv2.COLOR_RGB2BGR), [cv2.IMWRITE_WEBP_QUALITY, 82])
+            doc.close()
+        print('с допами:', len(seen))
+        # тайлы «Демонической паутины» с прозрачными углами
+        if os.path.exists(os.path.join(tmp, WEB_PDF)):
+            os.makedirs(os.path.join(ROOT, 'img', 'web'), exist_ok=True)
+            doc = pymupdf.open(os.path.join(tmp, WEB_PDF)); k = 0
+            for pi in range(0, len(doc), 2):
+                imgs = sorted([(doc[pi].get_image_bbox(im).y0, im[0]) for im in doc[pi].get_images(full=True) if im[2] > 1000])
+                for _, xref in imgs:
+                    if k >= len(WEB_NAMES): break
+                    x = pymupdf.Pixmap(doc, xref)
+                    if x.n > 3: x = pymupdf.Pixmap(pymupdf.csRGB, x)
+                    a = np.frombuffer(x.samples, dtype=np.uint8).reshape(x.height, x.width, x.n)[:, :, :3]
+                    a = cv2.resize(cv2.cvtColor(a, cv2.COLOR_RGB2BGR), (926, 805), interpolation=cv2.INTER_AREA)
+                    m = np.zeros((805, 926), np.uint8)
+                    poly = np.array([(463 + 461 * np.cos(np.radians(60 * t)), 402.5 + 461 * np.sin(np.radians(60 * t))) for t in range(6)], np.int32)
+                    cv2.fillPoly(m, [poly], 255)
+                    cv2.imwrite(os.path.join(ROOT, 'img', 'web', WEB_NAMES[k] + '.webp'), np.dstack([a, m]), [cv2.IMWRITE_WEBP_QUALITY, 80]); k += 1
+                x = None
+            doc.close(); print('тайлов:', k)
         doc = pymupdf.open(os.path.join(tmp, BOARD_PDF))
         x = pymupdf.Pixmap(doc, doc[0].get_images()[0][0])
         a = np.frombuffer(x.samples, dtype=np.uint8).reshape(x.height, x.width, x.n)[:, :, :3]
