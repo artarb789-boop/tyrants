@@ -107,6 +107,7 @@ function assembleWeb(L, at) {
     for (const r of td.regions) {
       const rid = elId(t, r.key);
       const reg = { id: rid, name: r.name, vp: r.vp, start: r.start, sec: 'C', locs: [], token: r.token ? { inf: 1, fullVp: r.fullVp } : null };
+      if (r.token) reg.center = [cx, cy];   // рисунок города — в центре тайла, жетон кладём туда
       r.locs.forEach((l, i) => { const [x, y] = P(l.x, l.y); const id = rid + '_' + i; reg.locs.push(id); b.locs.push({ id, x, y, region: rid, sec: 'C', white: l.white }); });
       b.regions.push(reg);
     }

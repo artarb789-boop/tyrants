@@ -51,7 +51,7 @@ const UI = (() => {
       seats.append(r);
     }
     box.append(seats);
-    const dRow = el('div', { class: 'row wrap' }, '<span class="lbl">Колоды рынка (выберите 2):</span>');
+    const dRow = el('div', { class: 'row wrap' }, '<span class="lbl" title="Выберите две колоды">Колоды рынка (2):</span>');
     const fRow = el('div', { class: 'row wrap' }, '<span class="lbl">Фанатские колоды:</span>');
     for (const d of Object.keys(DECK_RU)) (FAN_DECKS.includes(d) ? fRow : dRow).append(el('button', { class: 'pill' + (setup.decks.includes(d) ? ' on' : ''), onclick: () => {
       if (setup.decks.includes(d)) setup.decks = setup.decks.filter(x => x !== d); else { setup.decks.push(d); if (setup.decks.length > 2) setup.decks.shift(); }
@@ -78,7 +78,7 @@ const UI = (() => {
       lRow.append(el('button', { class: 'pill' + ((setup.level || 'normal') === v ? ' on' : ''), title: hint, onclick: () => { setup.level = v; renderSetup(); } }, t));
     box.append(lRow);
     const ok = setup.decks.length === 2;
-    box.append(el('div', { class: 'row' }, `<span class="hint">${setup.n === 2 ? 'Вдвоём играется только центральная часть поля.' : setup.n === 3 ? 'Втроём — центр и одна боковая часть.' : 'Вчетвером — всё поле.'} Первая партия — рекомендуются Дроу + Драконы.</span>`));
+    box.append(el('div', { class: 'row' }, `<span class="hint">${setup.board === 'web' ? 'Поле из гексов собирается под число игроков.' : setup.n === 2 ? 'Вдвоём играется только центральная часть поля.' : setup.n === 3 ? 'Втроём — центр и одна боковая часть.' : 'Вчетвером — всё поле.'} Первая партия — рекомендуются Дроу + Драконы.</span>`));
     const st = el('button', { class: 'big', onclick: start }, 'Начать партию'); if (!ok) st.disabled = true;
     box.append(st);
   }
@@ -112,10 +112,10 @@ const UI = (() => {
   function applyView() {
     const [W, H] = wrapSize();
     view.s = Math.max(0.6, Math.min(6, view.s));
-    // центр поля не уходит за край экрана
-    const r = view.a * Math.PI / 180, co = Math.cos(r), si = Math.sin(r);
-    const cx = view.x + view.s * (co * W / 2 - si * H / 2), cy = view.y + view.s * (si * W / 2 + co * H / 2);
-    view.x += Math.min(W, Math.max(0, cx)) - cx; view.y += Math.min(H, Math.max(0, cy)) - cy;
+    // в центре экрана всегда какая-то точка поля: так до любого края можно доехать при любом приближении
+    const r = view.a * Math.PI / 180, co = Math.cos(r), si = Math.sin(r), cx = W / 2 - view.x, cy = H / 2 - view.y;
+    const px = Math.min(W, Math.max(0, (co * cx + si * cy) / view.s)), py = Math.min(H, Math.max(0, (-si * cx + co * cy) / view.s));
+    view.x = W / 2 - view.s * (co * px - si * py); view.y = H / 2 - view.s * (si * px + co * py);
     $('#board').style.transform = `translate(${view.x}px, ${view.y}px) rotate(${view.a}deg) scale(${view.s})`;
   }
   function zoomAt(f, mx, my) {
@@ -221,11 +221,36 @@ const UI = (() => {
       root.append(sv('image', { href: 'img/board.jpg', x: 0, y: 0, width: 2000, height: 2000, preserveAspectRatio: 'none' }));
       for (const s of ['L', 'R']) if (!T.sections.includes(s)) root.append(sv('polygon', { points: SHADE[s], class: 'shade' }));
     }
-    for (const id of ['gReg', 'gLoc', 'gSpy', 'gOpt']) root.append(sv('g', { id }));
+    for (const id of ['gReg', 'gLoc', 'gSpy', 'gFx', 'gOpt']) root.append(sv('g', { id }));
+    prevBoard = null; anim.clear();
+  }
+  // ---------- анимации: отряды и шпионы появляются и исчезают ----------
+  let prevBoard = null;          // что было на поле при прошлой отрисовке
+  const anim = new Map();        // ключ -> время начала появления
+  // появление переживает перерисовки: анимация продолжается с того же места
+  function popIn(node, key, isNew) {
+    const now = performance.now();
+    if (isNew) anim.set(key, now);
+    const t = anim.get(key); if (t == null) return;
+    if (now - t > 600) { anim.delete(key); return; }
+    node.classList.add('popIn'); node.style.animationDelay = `${-(now - t)}ms`;
+  }
+  function ghost(node) {
+    node.classList.add('ghost');
+    $('#gFx').append(node);
+    const rm = () => node.remove(); node.addEventListener('animationend', rm); setTimeout(rm, 900);
+  }
+  function spyShape(x, y, hex) {
+    const g = sv('g', { class: 'spyG' });
+    g.append(sv('path', { d: `M${x} ${y - 30} L${x + 24} ${y} L${x} ${y + 30} L${x - 24} ${y} Z`, fill: hex, class: 'spy' }));
+    g.append(sv('path', { d: `M${x - 13} ${y} Q${x} ${y - 12} ${x + 13} ${y} Q${x} ${y + 12} ${x - 13} ${y} Z`, class: 'spyEye' }));
+    g.append(sv('circle', { cx: x, cy: y, r: 4.5, fill: hex, 'pointer-events': 'none' }));
+    return g;
   }
   function renderBoard() {
     const gReg = $('#gReg'), gLoc = $('#gLoc'), gSpy = $('#gSpy'), gOpt = $('#gOpt');
     gReg.innerHTML = ''; gLoc.innerHTML = ''; gSpy.innerHTML = ''; gOpt.innerHTML = '';
+    const prev = prevBoard, spyNow = new Map();
     const req = pending && pending.req.kind === 'board' ? pending.req : null;
     const optLoc = new Map(), optReg = new Map(), optSpy = new Map();
     if (req) for (const o of req.opts) { if (o.t === 'loc') optLoc.set(o.id, o); else if (o.t === 'region') optReg.set(o.id, o); else optSpy.set(o.rid + ':' + o.owner, o); }
@@ -242,23 +267,27 @@ const UI = (() => {
       if (r.token) {
         const tk = S.tokens[rid];
         const g = sv('g', { class: 'token' });
-        const cx = b.x0 - 58, cy = b.y1 + 6;
-        g.append(sv('circle', { cx, cy, r: 20, fill: tk.owner != null ? S.players[tk.owner].hex : '#4b3a6b', stroke: '#e8dcff', 'stroke-width': 3 }));
-        const tx = sv('text', { x: cx, y: cy + 8, class: 'tokTxt' }); tx.textContent = tk.full ? '★' : ''; g.append(tx);
-        if (!tk.full) g.append(sv('image', { href: INF_URI, x: cx - 13, y: cy - 13, width: 26, height: 26 }));
-        const tt = sv('title'); tt.textContent = `Жетон «${r.name}»: +1 влияние за ход; полный контроль: ${tk.pop ? popText(tk.pop) + ' в начале хода (Место Силы)' : `+${r.token.fullVp} ПО в конце хода`}`; g.append(tt);
+        // в центре рисунка города: на гексах — центр тайла, на классическом поле круг города над плашкой отрядов
+        const [cx, cy] = r.center || [(b.x0 + b.x1) / 2 + 12, b.y0 - 150];
+        g.append(sv('circle', { cx, cy, r: 52, fill: tk.owner != null ? S.players[tk.owner].hex : '#4b3a6b', stroke: tk.full ? '#ffd75a' : '#e8dcff', 'stroke-width': tk.full ? 7 : 4 }));
+        g.append(sv('image', { href: INF_URI, x: cx - 33, y: cy - 33, width: 66, height: 66 }));
+        if (tk.full) {
+          g.append(sv('circle', { cx: cx + 40, cy: cy - 40, r: 18, fill: '#ffd75a', stroke: '#3a2600', 'stroke-width': 3 }));
+          const tx = sv('text', { x: cx + 40, y: cy - 32, class: 'tokStar' }); tx.textContent = '★'; g.append(tx);
+        }
+        const tt = sv('title'); tt.textContent = tokTitle(rid); g.append(tt);
         gReg.append(g);
       }
       // шпионы
       S.spies[rid].forEach((q, k) => {
         const x = (b.x0 + b.x1) / 2 + (k - (S.spies[rid].length - 1) / 2) * 54, y = b.y1 + 66;
         const key = rid + ':' + q;
-        const d = sv('path', { d: `M${x} ${y - 30} L${x + 24} ${y} L${x} ${y + 30} L${x - 24} ${y} Z`, fill: S.players[q].hex, class: 'spy' + (optSpy.has(key) ? ' opt' : '') });
+        const g = spyShape(x, y, S.players[q].hex), d = g.firstChild;
+        if (optSpy.has(key)) { d.classList.add('opt'); d.onclick = () => answer(optSpy.get(key)); }
         const tt = sv('title'); tt.textContent = `Шпион: ${S.players[q].name}`; d.append(tt);
-        if (optSpy.has(key)) d.onclick = () => answer(optSpy.get(key));
-        gSpy.append(d);
-        gSpy.append(sv('path', { d: `M${x - 13} ${y} Q${x} ${y - 12} ${x + 13} ${y} Q${x} ${y + 12} ${x - 13} ${y} Z`, class: 'spyEye' }));
-        gSpy.append(sv('circle', { cx: x, cy: y, r: 4.5, fill: S.players[q].hex, 'pointer-events': 'none' }));
+        spyNow.set(key, { x, y, hex: S.players[q].hex });
+        popIn(g, 'spy:' + key, prev && !prev.spy.has(key));
+        gSpy.append(g);
       });
     }
     for (const id of T.act) {
@@ -267,6 +296,12 @@ const UI = (() => {
       const c = sv('circle', { cx: l.x, cy: l.y, r: 21, class: 'loc' + (v == null ? ' empty' : v === 'W' ? ' white' : ' troop') });
       if (v != null && v !== 'W') { c.setAttribute('fill', S.players[v].hex); c.setAttribute('stroke', lightHex(S.players[v].hex)); }
       gLoc.append(c);
+      const was = prev ? prev.occ[id] : undefined;
+      if (v != null) popIn(c, 'loc:' + id, prev && was !== v);
+      if (prev && was != null && was !== v) {
+        const gh = sv('circle', { cx: l.x, cy: l.y, r: 21, class: 'loc troop', fill: was === 'W' ? '#fbfbfb' : S.players[was].hex, stroke: was === 'W' ? '#555' : '#fff' });
+        ghost(gh);
+      }
       if (S.stones[id]) gLoc.append(sv('path', { d: `M${l.x} ${l.y - 40} l12 14 l-12 14 l-12 -14 Z`, class: 'stone' }));
       if (S.gems[id] && v === 'W') gLoc.append(sv('circle', { cx: l.x + 16, cy: l.y - 16, r: 9, class: 'gem ' + S.gems[id] }));
       if (v === 'W') { gLoc.append(sv('path', { d: `M${l.x - 9} ${l.y - 9} L${l.x + 9} ${l.y + 9} M${l.x + 9} ${l.y - 9} L${l.x - 9} ${l.y + 9}`, class: 'wx' })); }
@@ -277,6 +312,23 @@ const UI = (() => {
       }
       if (req && req.purpose === 'moveTo' && req.from === id) gOpt.append(sv('circle', { cx: l.x, cy: l.y, r: 29, class: 'fromRing' }));
     }
+    if (prev) for (const [key, s] of prev.spy) if (!spyNow.has(key)) ghost(spyShape(s.x, s.y, s.hex));
+    prevBoard = { occ: { ...S.occ }, spy: spyNow };
+  }
+  // что даёт жетон контроля
+  function tokFull(rid) {
+    const tk = S.tokens[rid];
+    if (!tk.pop) return `+${REG[rid].token.fullVp} ПО`;
+    const e = tk.pop, a = [];
+    if (e.vp) a.push(`+${e.vp} ПО`); if (e.pow) a.push(`+${e.pow}${POW}`);
+    if (e.draw) a.push(`взять ${e.draw}`); if (e.discard) a.push(`сбросить ${e.discard}`);
+    return a.join(', ');
+  }
+  function tokTitle(rid) {
+    const tk = S.tokens[rid], r = REG[rid];
+    return `Жетон «${r.name}»${tk.owner != null ? ` — у игрока ${S.players[tk.owner].name}` : ''}.\n` +
+      `Контроль: +1 влияние в начале хода.\nПолный контроль (все локации ваши, нет чужих шпионов): ` +
+      (tk.pop ? `${popText(tk.pop)} — вместо +1 влияния (Место Силы).` : `ещё +${r.token.fullVp} ПО в конце хода.`);
   }
   function lightHex(h) { return h === '#2a2730' ? '#cfc6e6' : '#ffffff'; }
 
@@ -292,7 +344,11 @@ const UI = (() => {
     box.style.setProperty('--pc', S.players.length === 3 ? 3 : 2);
     for (const P of S.players) {
       const sc = scoreOf(P.idx);
-      const toks = Object.keys(S.tokens).filter(r => S.tokens[r].owner === P.idx).map(r => REG[r].name + (S.tokens[r].full ? '★' : '')).join(', ');
+      const toks = Object.keys(S.tokens).filter(r => S.tokens[r].owner === P.idx).map(r => {
+        const tk = S.tokens[r], full = tokFull(r);
+        const gives = tk.full ? (tk.pop ? full : `+1${INF} ${full}`) : `+1${INF} <span class="dim">· полный: ${full}</span>`;
+        return `<span class="tokChip${tk.full ? ' full' : ''}" title="${tokTitle(r)}">${tk.full ? '★ ' : ''}<b>${REG[r].name}</b> ${gives}</span>`;
+      }).join('');
       const d = el('div', { class: 'pl' + (P.idx === S.cur ? ' cur' : '') });
       d.innerHTML = `<div class="plTop"><span class="sw" style="background:${P.hex}"></span><b>${P.name}</b>${P.bot ? ` <span class="tag">${LEVEL_RU[P.level] || 'бот'}</span>` : ''}${P.idx === S.first ? ' <span class="tag">1-й</span>' : ''}
         <span class="vpTotal" title="Очки, если игра закончится сейчас">≈ ${sc.total} ПО</span></div>
@@ -306,7 +362,7 @@ const UI = (() => {
           ${S.decks.includes('arachnids') ? `<a class="web" title="Паутина">🕷 ${P.web.length}</a>` : ''}
           ${S.board.web ? `<span title="Камни Силы">◆ ${P.stones}</span>` : ''}
           ${S.modules.gems ? `<span title="Камни: синие / красные / фиолетовые">💎 ${P.gems.blue}/${P.gems.red}/${P.gems.purple}</span>` : ''}
-        </div>${toks ? `<div class="plToks">${INF} ${toks}</div>` : ''}`;
+        </div>${toks ? `<div class="plToks">${toks}</div>` : ''}`;
       d.querySelector('.inner').onclick = () => showZone(`Внутренний круг: ${P.name}`, P.inner);
       const wb = d.querySelector('.web'); if (wb) wb.onclick = () => showZone(`Паутина: ${P.name}`, P.web);
       box.append(d);
@@ -321,7 +377,7 @@ const UI = (() => {
       const im = cardImg(u, 'mk' + (canBuy && S.pool.i >= c ? ' afford' : ''), () => { if (myTurn()) doBuy({ uid: u, src: 'market', slot: i, cost: c }); });
       box.append(im);
     });
-    $('#mdeckCount').textContent = `колода: ${S.mdeck.length}`;
+    $('#mdeckCount').textContent = S.mdeck.length;
     const sup = $('#supply'); sup.innerHTML = '';
     const pile = (uids, cost, src, label) => {
       const w = el('div', { class: 'pile' });
@@ -351,7 +407,11 @@ const UI = (() => {
     const mine = myTurn();
     $('#turnTitle').innerHTML = S.phase === 'over' ? 'Игра окончена' : `Ход: <span style="color:${P.hex === '#2a2730' ? '#b9b3c6' : P.hex}">${P.name}</span> · раунд ${S.round}${S.endTriggered ? ' · <b class="warn">последний раунд</b>' : ''}`;
     const bD = $('#bDeploy'), bK = $('#bKill'), bS = $('#bSpy'), bE = $('#bEnd'), bA = $('#bAll');
-    bD.disabled = !mine || S.pool.p < 1; bK.disabled = !mine || S.pool.p < 3; bS.disabled = !mine || S.pool.p < 3;
+    bD.disabled = !mine || S.pool.p < 1;
+    const empty = P.barracks === 0;
+    bD.innerHTML = empty ? `+1 ПО <small>1${POW}</small>` : `Отряд <small>1${POW}</small>`;
+    bD.title = empty ? 'Казармы пусты: по правилам вместо отряда вы получаете 1 ПО за 1 силу' : 'Отправить отряд за 1 силу (подряд, пока хватает силы)';
+    if (S.endTriggered && !endShown) { endShown = true; flash('Условие конца игры: раунд доигрывается до конца', 3500); } bK.disabled = !mine || S.pool.p < 3; bS.disabled = !mine || S.pool.p < 3;
     bE.disabled = !mine; bA.disabled = !mine || !P.hand.length;
     const gb = $('#gems'); gb.innerHTML = '';
     if (S.modules.gems && !P.bot) for (const g of ['blue', 'red', 'purple']) if (P.gems[g]) {
@@ -428,7 +488,8 @@ const UI = (() => {
   }
   function doPlay(u) { run(() => playCard(S.cur, u)); }
   function doBuy(b) { if (S.pool.i < b.cost) { flash('Не хватает влияния'); return; } run(async () => buy(S.cur, b)); }
-  function flash(t) { const f = $('#flash'); f.textContent = t; f.classList.add('show'); setTimeout(() => f.classList.remove('show'), 1400); }
+  let endShown = false;
+  function flash(t, ms = 1400) { const f = $('#flash'); f.textContent = t; f.classList.add('show'); clearTimeout(flash.t); flash.t = setTimeout(() => f.classList.remove('show'), ms); }
   function bindButtons() {
     // отряды выставляются подряд, пока хватает силы; «Готово» — закончить
     $('#bDeploy').onclick = () => myTurn() && run(async () => {

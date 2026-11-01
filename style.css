@@ -22,17 +22,18 @@ a { cursor: pointer; color: var(--accent); }
 .setupBox h1 { margin: 0; font-size: 28px; letter-spacing: 1px; color: #d9c2ff; }
 .sub { color: var(--dim); margin: 2px 0 8px; }
 .row { display: flex; align-items: center; gap: 8px; margin: 7px 0; }
-.seats { display: grid; grid-template-columns: 1fr; column-gap: 20px; }
-.seats.two { grid-template-columns: 1fr 1fr; }
+.seats { display: grid; grid-template-columns: minmax(0, 1fr); column-gap: 24px; }
+.seats.two { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+.seat .pill { flex: none; }
 .seats .row { margin: 4px 0; }
-.setupBox .lbl { min-width: 170px; }
+.setupBox .lbl { width: 190px; min-width: 0; flex: none; }
 .setupBox button.big { margin-top: 8px; padding: 10px; }
 .row.wrap { flex-wrap: wrap; }
 .lbl { min-width: 120px; color: var(--dim); }
 .pill { padding: 5px 12px; border-radius: 20px; }
 .pill.on { background: #5b2ea6; border-color: #a77bf0; }
-.seat input { flex: 1; min-width: 80px; background: #120d1c; color: var(--text); border: 1px solid var(--line); border-radius: 8px; padding: 6px 8px; font: inherit; }
-.seat .house { width: 136px; color: var(--dim); font-size: 13px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.seat input { flex: 1; width: 0; min-width: 70px; background: #120d1c; color: var(--text); border: 1px solid var(--line); border-radius: 8px; padding: 6px 8px; font: inherit; }
+.seat .house { width: 120px; flex: none; color: var(--dim); font-size: 13px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .sw { display: inline-block; width: 16px; height: 16px; border-radius: 50%; border: 2px solid #d8cfee; flex: none; }
 .hint { color: var(--dim); font-size: 13px; }
 
@@ -67,7 +68,11 @@ button.tab.attn:not(.on) { background: #4a3a10; animation: pulse .8s infinite al
 .vpTotal { margin-left: auto; color: var(--gold); font-size: 13px; }
 .tag { font-size: 11px; color: var(--dim); border: 1px solid var(--line); border-radius: 6px; padding: 0 4px; }
 .plStats { display: flex; gap: 10px; font-size: 13px; margin-top: 2px; flex-wrap: wrap; }
-.plToks { font-size: 12px; color: var(--inf); margin-top: 2px; }
+.plToks { display: flex; flex-wrap: wrap; gap: 4px; margin-top: 4px; }
+.tokChip { font-size: 12px; color: var(--inf); background: #120d1c; border: 1px solid var(--line); border-radius: 7px; padding: 1px 7px; cursor: help; }
+.tokChip.full { border-color: var(--gold); }
+.tokChip b { color: var(--text); font-weight: 600; }
+.tokChip .ic { width: 1.1em; height: 1.1em; }
 
 /* ---- cards ---- */
 img.card { border-radius: 6px; display: block; box-shadow: 0 2px 6px #0008; user-select: none; }
@@ -128,6 +133,12 @@ img.playable { cursor: pointer; outline: 2px solid #7ee08a; outline-offset: 1px;
 #gems { display: inline-flex; gap: 6px; }
 .turnBtns { margin-left: auto; display: inline-flex; gap: 4px; }
 .token text, .tokTxt { fill: #fff; font-size: 22px; text-anchor: middle; pointer-events: none; }
+.token { filter: drop-shadow(0 0 6px #000); }
+.tokStar { fill: #3a2600; font-size: 22px; text-anchor: middle; pointer-events: none; }
+.popIn { transform-box: fill-box; transform-origin: center; animation: popIn .5s cubic-bezier(.3, 1.7, .5, 1) both; }
+@keyframes popIn { from { transform: scale(0); opacity: 0; } to { transform: scale(1); opacity: 1; } }
+.ghost { transform-box: fill-box; transform-origin: center; animation: popOut .55s ease-in forwards; pointer-events: none; }
+@keyframes popOut { 0% { transform: scale(1); opacity: 1; } 30% { transform: scale(1.25); opacity: .9; } 100% { transform: scale(.2); opacity: 0; } }
 @keyframes pulse { from { opacity: .55; } to { opacity: 1; } }
 
 /* ---- modal ---- */
