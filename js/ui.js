@@ -19,6 +19,17 @@ const UI = (() => {
   document.head.append(el('style', {}, `.ic.pow{background-image:url("${POW_URI}")}.ic.inf{background-image:url("${INF_URI}")}`));
   const POW = '<i class="ic pow"></i>', INF = '<i class="ic inf"></i>';
   const LEVEL_RU = { easy: 'лёгкий бот', normal: 'бот', hard: 'тяжёлый бот' };
+  const CENTER_RU = {
+    A1: 'Араумикос: город на 6 мест, 8 ПО, жетон контроля — много очков',
+    A2: 'Город туманов, Тёмное пламя, Галленгаст: бонус в начале хода за все три региона',
+    A3: 'Араумикос (2 места) и шесть застав с белыми отрядами',
+    A4: 'густая сеть маршрутов: 7 узлов, 12 связей',
+    A5: 'сеть маршрутов: 7 узлов, все пути через центр',
+    A6: 'дерево маршрутов: 7 узлов без колец, путь не обойти',
+    A7: 'один узел на пересечении всех путей — блокирующий',
+    A8: 'кольцо маршрутов: 6 узлов',
+    A9: 'Колодцы тьмы: стартовый регион на 9 мест, 9 ПО — много войск',
+  };
 
   let pending = null;   // { req, resolve }
   let busy = false;     // идёт розыгрыш эффекта / ход бота
@@ -64,7 +75,21 @@ const UI = (() => {
     box.append(mRow);
     const bRow = el('div', { class: 'row wrap' }, '<span class="lbl">Поле:</span>');
     for (const [v, t] of [['base', 'Классическое'], ['web', 'Демоническая паутина (гексы)']]) bRow.append(el('button', { class: 'pill' + ((setup.board || 'base') === v ? ' on' : ''), onclick: () => { setup.board = v; renderSetup(); } }, t));
+    if (setup.board === 'web') bRow.append(el('button', { class: 'pill' + (setup.xhex ? ' on' : ''), title: 'Один из экспериментальных гексов X1–X4 заменяет гекс C: регионы без маршрутов, развилки, транзитные узлы. Правила дополнения: «на свой страх и риск»',
+      onclick: () => { setup.xhex = !setup.xhex; renderSetup(); } }, '+ X-гекс'));
     box.append(bRow);
+    // центральный гекс: по правилам его выбирают игроки
+    if (setup.board === 'web') {
+      const cRow = el('div', { class: 'row wrap' }, '<span class="lbl">Центр поля:</span>');
+      const cur = setup.center || '';
+      for (const [v, t] of [['', 'случайный'], ...Object.keys(CENTER_RU).map(k => [k, k])])
+        cRow.append(el('button', { class: 'pill mini' + (cur === v ? ' on' : ''), title: v ? CENTER_RU[v] : 'Любой гекс A', onclick: () => { setup.center = v; renderSetup(); } }, t));
+      box.append(cRow);
+      const info = el('div', { class: 'row centerInfo' });
+      if (cur) info.append(el('img', { src: `img/web/${cur}.webp`, alt: cur, class: 'centerImg' }));
+      info.append(el('span', { class: 'hint' }, cur ? `${cur} — ${CENTER_RU[cur]}` : 'Центральный гекс выберется случайно из A1–A9.'));
+      box.append(info);
+    }
     if (setup.n === 3 && setup.board !== 'web') {
       const sRow = el('div', { class: 'row' }, '<span class="lbl">Часть поля:</span>');
       for (const [v, t] of [['L', 'центр + левая'], ['R', 'центр + правая']]) sRow.append(el('button', { class: 'pill' + (setup.side === v ? ' on' : ''), onclick: () => { setup.side = v; renderSetup(); } }, t));
@@ -85,7 +110,7 @@ const UI = (() => {
   async function start() {
     try { localStorage.setItem('tyrants.setup', JSON.stringify(setup)); } catch (e) {}
     const players = setup.seats.slice(0, setup.n).map((s, i) => ({ name: s.name.trim() || HOUSES[i].name, bot: s.bot, level: setup.level || 'normal', hex: HOUSES[i].hex, house: HOUSES[i].name }));
-    newGame({ players, decks: setup.decks, side: setup.side, botDelay: setup.speed, modules: setup.modules, board: setup.board || 'base' });
+    newGame({ players, decks: setup.decks, side: setup.side, botDelay: setup.speed, modules: setup.modules, board: setup.board || 'base', xhex: setup.board === 'web' && !!setup.xhex, center: setup.board === 'web' && setup.center || null });
     $('#setup').classList.add('hidden'); $('#game').classList.remove('hidden');
     $('#log').innerHTML = ''; S.log.forEach(m => onLog(m)); logNew = 0; setTab('game');
     buildBoardStatic(); render();
@@ -643,7 +668,7 @@ const UI = (() => {
       Подсчёт: ПО регионов под контролем, +2 за полный контроль, 1 ПО за каждый отряд в трофейном зале, ПО карт колоды (левое число) и внутреннего круга (правое число), жетоны ПО.</p>
       <p><b>Фанатские дополнения.</b> <i>Осада</i> и <i>Юголоты</i> — новые колоды рынка; <i>Паукообразные</i> добавляют паутину игрока (карты в ней считаются колодой в конце игры и усиливают пауков по аспектам) и Отравленных слуг (−1 ПО, избавиться — вернуть своего шпиона или 2 своих отряда из региона).
       <i>Места Силы</i> — другие бонусы полного контроля на жетонах (в начале хода). <i>Камни Тьмы</i> — под белыми отрядами лежат камни: уничтожив отряд, можно вернуть его в запас и забрать камень (+1 сила / +1 влияние) или взять в трофеи, убрав камень.
-      <i>Демоническая паутина</i> — поле из гексов: камни силы ◆ на тупиках маршрутов захватываются отрядом за 1 силу (1 за ход) и тратятся со следующего хода на +3 силы или +3 влияния.</p>
+      <i>Демоническая паутина</i> — поле из гексов: камни силы ◆ на тупиках маршрутов захватываются отрядом за 1 силу (1 за ход) и тратятся со следующего хода на +3 силы или +3 влияния. <i>X-гексы</i> (по желанию): один случайный X-гекс заменяет гекс C; в «Пустоши» и «Равнодушие» не ведёт ни один маршрут — туда попадают шпионом.</p>
       <p><b>Подсказки</b>: поле приближается колесом мыши или кнопками ＋/－ справа сверху и перетаскивается мышью; ⤢ — показать всё поле. Вращение — как камера в стратегиях: зажмите ⟲/⟳ или клавиши Q/E, либо тяните поле правой (средней) кнопкой мыши. «Отправить отряд» выставляет отряды подряд, пока хватает силы («Готово» — закончить). Вкладка «Журнал» сверху — история партии. Сложность ботов выбирается в меню: лёгкие ошибаются и тратят не всю силу, тяжёлые следят за лидером и реже размениваются на убийства. Наведите курсор на карту — она увеличится; на регион — увидите расклад сил. Значок 👑 у игрока — посмотреть внутренний круг.</p></div>`;
     m.append(el('button', { class: 'skip', onclick: closeModal }, 'Закрыть'));
   }

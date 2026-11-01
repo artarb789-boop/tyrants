@@ -47,7 +47,7 @@ setBoard(BOARD);
 const TILE_W = 1000, TILE_H = 866, IMG_W = 1852, IMG_H = 1610;
 const HEX_DIR = [[0, -1], [1, -1], [1, 0], [0, 1], [-1, 1], [-1, 0]];  // соседи по граням 0..5 (плоский верх)
 const WEB_TILE = {}; (typeof WEB_TILES !== 'undefined' ? WEB_TILES : []).forEach(t => { WEB_TILE[t.id] = t; });
-function webLayout(n, center) {
+function webLayout(n, center, xhex) {
   const pick = a => a.splice(Math.floor(Math.random() * a.length), 1)[0];
   const cs = shuffle(['C1', 'C2', 'C3', 'C4', 'C5', 'C6']);
   const L = [{ id: center || pick(['A1', 'A2', 'A3', 'A4', 'A5', 'A6', 'A7', 'A8', 'A9']), q: 0, r: 0 }];
@@ -59,12 +59,22 @@ function webLayout(n, center) {
     L.push({ id: c78[0], q: 0, r: -2 }, { id: c78[1], q: 0, r: 2 }, { id: 'B1', q: -1, r: -1 }, { id: 'B2', q: 1, r: 1 },
            { id: b34[0], q: 1, r: -2 }, { id: b34[1], q: -1, r: 2 }, { id: b56[0], q: -2, r: 1 }, { id: b56[1], q: 2, r: -1 });
   }
+  // один случайный X-гекс заменяет гекс C с тем же или меньшим числом соединений (X даёт не меньше выходов);
+  // стартовых регионов (они почти все на гексах C) остаётся хотя бы на один больше, чем игроков
+  if (xhex) {
+    const conn = id => WEB_TILE[id].exits.filter(e => e != null).length;
+    const starts = id => WEB_TILE[id].regions.filter(r => r.start).length;
+    const total = L.reduce((s, t) => s + starts(t.id), 0);
+    const x = pick(['X1', 'X2', 'X3', 'X4']);
+    const cand = L.filter(t => t.id[0] === 'C' && conn(t.id) <= conn(x) && total - starts(t.id) >= n + 1);
+    if (cand.length) pick(cand).id = x;
+  }
   return L;
 }
 const tileExit = (t, e) => WEB_TILE[t.id].exits[((e - t.rot) % 6 + 6) % 6];
-function buildWebBoard(n, center) {
+function buildWebBoard(n, center, xhex) {
   for (let attempt = 0; attempt < 200; attempt++) {
-    const L = webLayout(n, center);
+    const L = webLayout(n, center, xhex);
     const at = {}; L.forEach(t => { at[t.q + ',' + t.r] = t; });
     // повороты: каждый тайл — с максимумом соединений с уже выложенными соседями
     L.forEach((t, i) => {
@@ -174,7 +184,7 @@ function cidByName(n) { return CARD_BY_NAME[n].id; }
 
 function newGame(cfg) {
   const n = cfg.players.length;
-  setBoard(cfg.board === 'web' ? buildWebBoard(n, cfg.center) : BOARD);
+  setBoard(cfg.board === 'web' ? buildWebBoard(n, cfg.center, cfg.xhex) : BOARD);
   const sections = BD.web ? ['C'] : n === 2 ? ['C'] : n === 3 ? ['C', cfg.side || 'L'] : ['L', 'C', 'R'];
   S = { nextUid: 1, cards: {}, log: [], players: [], occ: {}, spies: {}, tokens: {}, market: [], mdeck: [], devoured: [],
         supply: { guard: [], priest: [], madman: [], poison: [] }, pool: { p: 0, i: 0 }, played: [], eot: [], eotWeb: [], flags: {},

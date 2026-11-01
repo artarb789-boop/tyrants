@@ -20,7 +20,7 @@ for g in range(games):
     decks = fixed or [ALL[(g * 2) % 9], ALL[(g * 2 + 1) % 9]]
     lv = [LEVELS[(i + g) % len(LEVELS)] for i in range(np_)]   # уровни сдвигаются по местам от партии к партии
     ctx.eval(f"""var __done=false, __err=null;
-      newGame({{players:{json.dumps(lv)}.map((l, i)=>({{name:'Бот'+(i+1),bot:true,level:l,hex:'#fff',house:'x'}})), decks:{json.dumps(decks)}, botDelay:0, board:{json.dumps(os.environ.get('BOARD', 'base'))}, modules:{{pop:{'true' if 'pop' in MODS else 'false'}, gems:{'true' if 'gems' in MODS else 'false'}}}}});
+      newGame({{players:{json.dumps(lv)}.map((l, i)=>({{name:'Бот'+(i+1),bot:true,level:l,hex:'#fff',house:'x'}})), decks:{json.dumps(decks)}, botDelay:0, board:{json.dumps(os.environ.get('BOARD', 'base'))}, xhex:{'true' if os.environ.get('XHEX') else 'false'}, center:{json.dumps(os.environ.get('CENTER') or None)}, modules:{{pop:{'true' if 'pop' in MODS else 'false'}, gems:{'true' if 'gems' in MODS else 'false'}}}}});
       if ({'true' if os.environ.get('STRESS') else 'false'}) for (const P of S.players) {{ for (const c of CARDS_DATA.filter(c=>{json.dumps(decks)}.includes(c.deck)||(c.deck==='poison'&&{json.dumps(decks)}.includes('arachnids')))) P.deck.push(mkCard(c.id)); shuffle(P.deck); }}
       (async()=>{{ await initialDeploy(); await startTurn(); }})().then(()=>{{__done=true}}, e=>{{__err=String(e)+' @@ '+e.stack; __done=true}});""")
     n = 0
@@ -29,7 +29,7 @@ for g in range(games):
         n += 1
     err = ctx.eval('__err')
     if err or not ctx.eval('__done'):
-        print('ОШИБКА', err or 'не завершилась'); print(ctx.eval("S.log.slice(-20).join('\n')")); sys.exit(1)
+        print('ОШИБКА', err or 'не завершилась'); print(ctx.eval("S.log.slice(-20).join('\\n')")); sys.exit(1)
     played |= set(json.loads(ctx.eval("JSON.stringify(Object.keys(__played))")))
     res = json.loads(ctx.eval("JSON.stringify({r:S.round,t:S.turnNo,sc:S.players.map(P=>scoreOf(P.idx)),bar:S.players.map(P=>P.barracks),md:S.mdeck.length})"))
     best = max(s['total'] for s in res['sc'])

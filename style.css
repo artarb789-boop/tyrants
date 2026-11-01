@@ -28,6 +28,9 @@ a { cursor: pointer; color: var(--accent); }
 .seats .row { margin: 4px 0; }
 .setupBox .lbl { width: 190px; min-width: 0; flex: none; }
 .setupBox button.big { margin-top: 8px; padding: 10px; }
+.pill.mini { padding: 4px 9px; min-width: 36px; }
+.centerInfo { margin: 0 0 4px; min-height: 22px; }
+.centerImg { width: 64px; height: auto; margin-left: 198px; filter: drop-shadow(0 2px 4px #000); }
 .row.wrap { flex-wrap: wrap; }
 .lbl { min-width: 120px; color: var(--dim); }
 .pill { padding: 5px 12px; border-radius: 20px; }

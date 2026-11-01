@@ -11,7 +11,7 @@ CARD_PDFS = [  # базовые листы карт
 BOARD_PDF = 'Поле (целиком).pdf'
 FAN_PDFS = {'Карты Фан.Допа (4) колоды Осады и Юголотов.pdf': ['siege', 'yugoloths'], 'Карты Фан.Допа (5) колода Паукообразных.pdf': ['arachnids']}
 WEB_PDF = 'Демоническая паутина.pdf'
-WEB_NAMES = 'A1 A2 A3 A4 A5 A6 A7 A8 A9 B1 B2 B3 B4 B5 B6 C1 C2 C3 C4 C5 C6 C7 C8'.split()
+WEB_NAMES = 'A1 A2 A3 A4 A5 A6 A7 A8 A9 B1 B2 B3 B4 B5 B6 C1 C2 C3 C4 C5 C6 C7 C8 X1 X2 X3 X4'.split()
 DECKS = ['drow', 'dragons', 'elementals', 'demons', 'aberrations', 'undead']
 XS = [30, 208, 387, 565]; YS = [47, 296, 546, 795]  # сетка 3x3 карт на листе
 
