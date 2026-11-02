@@ -41,8 +41,12 @@ const UI = (() => {
   // ---------- настройка ----------
   const setup = { n: 2, seats: [], decks: ['drow', 'dragons'], side: 'L', speed: 450, level: 'normal', modules: { pop: false, gems: false } };
   function initSetup() {
-    for (let i = 0; i < 4; i++) setup.seats.push({ name: i === 0 ? 'Игрок' : HOUSES[i].name, bot: i !== 0 });
+    for (let i = 0; i < 4; i++) setup.seats.push({ name: i === 0 ? 'Игрок' : HOUSES[i].name, bot: i !== 0, hex: HOUSES[i].hex });
     try { const s = JSON.parse(localStorage.getItem('tyrants.setup') || 'null'); if (s) Object.assign(setup, s); } catch (e) {}
+    setup.seats.forEach((s, i) => { if (!s.hex) s.hex = HOUSES[i].hex; });
+    setup.palOpen = null;
+    // палитра закрывается щелчком мимо
+    document.addEventListener('click', e => { if (setup.palOpen != null && !e.target.closest('.palette, .sw.pick')) { setup.palOpen = null; renderSetup(); } });
     renderSetup();
   }
   function renderSetup() {
@@ -54,7 +58,17 @@ const UI = (() => {
     for (let i = 0; i < setup.n; i++) {
       const s = setup.seats[i];
       const r = el('div', { class: 'row seat' });
-      r.append(el('span', { class: 'sw', style: `background:${HOUSES[i].hex}` }));
+      const sw = el('button', { class: 'sw pick', style: `background:${s.hex}`, title: 'Выбрать цвет', onclick: () => { setup.palOpen = setup.palOpen === i ? null : i; renderSetup(); } });
+      r.append(sw);
+      if (setup.palOpen === i) {
+        const pal = el('div', { class: 'palette' });
+        for (const [hex, nm] of PALETTE) {
+          const other = setup.seats.slice(0, setup.n).findIndex((o, j) => j !== i && o.hex === hex);
+          pal.append(el('button', { class: (s.hex === hex ? 'on' : '') + (other >= 0 ? ' taken' : ''), style: `background:${hex}`, title: nm + (other >= 0 ? ` — занят (${setup.seats[other].name}), поменяетесь цветами` : ''),
+            onclick: () => { if (other >= 0) setup.seats[other].hex = s.hex; s.hex = hex; setup.palOpen = null; renderSetup(); } }));
+        }
+        r.append(pal);
+      }
       r.append(el('span', { class: 'house' }, HOUSES[i].name));
       const inp = el('input', { value: s.name, maxlength: 18 }); inp.oninput = () => { s.name = inp.value; };
       r.append(inp);
@@ -109,7 +123,7 @@ const UI = (() => {
   }
   async function start() {
     try { localStorage.setItem('tyrants.setup', JSON.stringify(setup)); } catch (e) {}
-    const players = setup.seats.slice(0, setup.n).map((s, i) => ({ name: s.name.trim() || HOUSES[i].name, bot: s.bot, level: setup.level || 'normal', hex: HOUSES[i].hex, house: HOUSES[i].name }));
+    const players = setup.seats.slice(0, setup.n).map((s, i) => ({ name: s.name.trim() || HOUSES[i].name, bot: s.bot, level: setup.level || 'normal', hex: s.hex || HOUSES[i].hex, house: HOUSES[i].name }));
     newGame({ players, decks: setup.decks, side: setup.side, botDelay: setup.speed, modules: setup.modules, board: setup.board || 'base', xhex: setup.board === 'web' && !!setup.xhex, center: setup.board === 'web' && setup.center || null });
     $('#setup').classList.add('hidden'); $('#game').classList.remove('hidden');
     $('#log').innerHTML = ''; S.log.forEach(m => onLog(m)); logNew = 0; setTab('game');
@@ -247,7 +261,7 @@ const UI = (() => {
       for (const s of ['L', 'R']) if (!T.sections.includes(s)) root.append(sv('polygon', { points: SHADE[s], class: 'shade' }));
     }
     for (const id of ['gReg', 'gLoc', 'gSpy', 'gFx', 'gOpt']) root.append(sv('g', { id }));
-    prevBoard = null; anim.clear();
+    prevBoard = null; anim.clear(); pendingKill.clear();
   }
   // ---------- анимации: отряды и шпионы появляются и исчезают ----------
   let prevBoard = null;          // что было на поле при прошлой отрисовке
@@ -259,6 +273,39 @@ const UI = (() => {
     const t = anim.get(key); if (t == null) return;
     if (now - t > 600) { anim.delete(key); return; }
     node.classList.add('popIn'); node.style.animationDelay = `${-(now - t)}ms`;
+  }
+  const pendingKill = new Set();   // локации, где отряд только что уничтожен
+  function fx(kind, id) { if (kind === 'kill') pendingKill.add(id); }
+  // кружок раскалывается на куски, они разлетаются и под «силой тяжести» падают вниз за экран
+  function shatter(l, fill, stroke) {
+    const probe = sv('circle', { cx: l.x, cy: l.y, r: 21, fill: 'none' }); $('#gFx').append(probe);
+    const b = probe.getBoundingClientRect(); probe.remove();
+    if (!b.width) return;
+    const sx = b.left + b.width / 2, sy = b.top + b.height / 2, r = b.width / 2, layer = $('#fxLayer');
+    const N = 7, a0 = Math.random() * Math.PI * 2, G = 2200;
+    for (let k = 0; k < N; k++) {
+      const a1 = a0 + k * 2 * Math.PI / N, a2 = a1 + 2 * Math.PI / N, am = (a1 + a2) / 2;
+      const pts = ['50% 50%']; for (let q = 0; q <= 4; q++) { const a = a1 + (a2 - a1) * q / 4; pts.push(`${50 + 54 * Math.cos(a)}% ${50 + 54 * Math.sin(a)}%`); }
+      const p = el('div', { class: 'shard' });
+      Object.assign(p.style, { left: `${sx - r}px`, top: `${sy - r}px`, width: `${2 * r}px`, height: `${2 * r}px`, background: fill,
+        borderColor: stroke, borderWidth: `${Math.max(1.5, r * 0.19)}px`, clipPath: `polygon(${pts.join(',')})`, transformOrigin: `${50 + 30 * Math.cos(am)}% ${50 + 30 * Math.sin(am)}%` });
+      layer.append(p);
+      // разлёт наружу и чуть вверх, затем падение до низа экрана
+      const vx = Math.cos(am) * (90 + Math.random() * 160), vy = Math.sin(am) * 120 - 260 - Math.random() * 200, spin = (Math.random() - 0.5) * 900;
+      const H = innerHeight - sy + 3 * r + 40, T = (-vy + Math.sqrt(vy * vy + 2 * G * H)) / G;
+      const frames = [{ transform: 'translate(0px, 0px) rotate(0deg)', opacity: 1 }];
+      const crack = 0.05;   // короткая пауза «трещины» — куски чуть расходятся
+      frames.push({ transform: `translate(${Math.cos(am) * r * 0.18}px, ${Math.sin(am) * r * 0.18}px) rotate(0deg)`, opacity: 1, offset: crack });
+      for (let i = 1; i <= 14; i++) {
+        const t = T * i / 14;
+        frames.push({ transform: `translate(${Math.cos(am) * r * 0.18 + vx * t}px, ${Math.sin(am) * r * 0.18 + vy * t + G * t * t / 2}px) rotate(${spin * t}deg)`, opacity: i === 14 ? 0.6 : 1, offset: crack + (1 - crack) * i / 14 });
+      }
+      const an = p.animate(frames, { duration: (T + 0.08) * 1000, easing: 'linear', fill: 'forwards' });
+      an.onfinish = () => p.remove(); setTimeout(() => p.remove(), (T + 1) * 1000);
+    }
+    // вспышка на месте гибели
+    const fl = sv('circle', { cx: l.x, cy: l.y, r: 21, class: 'deathFlash' }); $('#gFx').append(fl);
+    setTimeout(() => fl.remove(), 600);
   }
   function ghost(node) {
     node.classList.add('ghost');
@@ -324,8 +371,9 @@ const UI = (() => {
       const was = prev ? prev.occ[id] : undefined;
       if (v != null) popIn(c, 'loc:' + id, prev && was !== v);
       if (prev && was != null && was !== v) {
-        const gh = sv('circle', { cx: l.x, cy: l.y, r: 21, class: 'loc troop', fill: was === 'W' ? '#fbfbfb' : S.players[was].hex, stroke: was === 'W' ? '#555' : '#fff' });
-        ghost(gh);
+        const fill = was === 'W' ? '#fbfbfb' : S.players[was].hex, stroke = was === 'W' ? '#555' : lightHex(fill);
+        if (pendingKill.delete(id)) shatter(l, fill, stroke);
+        else ghost(sv('circle', { cx: l.x, cy: l.y, r: 21, class: 'loc troop', fill, stroke }));
       }
       if (S.stones[id]) gLoc.append(sv('path', { d: `M${l.x} ${l.y - 40} l12 14 l-12 14 l-12 -14 Z`, class: 'stone' }));
       if (S.gems[id] && v === 'W') gLoc.append(sv('circle', { cx: l.x + 16, cy: l.y - 16, r: 9, class: 'gem ' + S.gems[id] }));
@@ -355,7 +403,7 @@ const UI = (() => {
       `Контроль: +1 влияние в начале хода.\nПолный контроль (все локации ваши, нет чужих шпионов): ` +
       (tk.pop ? `${popText(tk.pop)} — вместо +1 влияния (Место Силы).` : `ещё +${r.token.fullVp} ПО в конце хода.`);
   }
-  function lightHex(h) { return h === '#2a2730' ? '#cfc6e6' : '#ffffff'; }
+  function lightHex(h) { return isDarkHex(h) ? '#cfc6e6' : '#ffffff'; }
 
   // ---------- панели ----------
   function cardImg(uid, cls, onclick) {
@@ -430,7 +478,7 @@ const UI = (() => {
     const P = S.players[S.cur];
     $('#powN').textContent = S.pool.p; $('#infN').textContent = S.pool.i;
     const mine = myTurn();
-    $('#turnTitle').innerHTML = S.phase === 'over' ? 'Игра окончена' : `Ход: <span style="color:${P.hex === '#2a2730' ? '#b9b3c6' : P.hex}">${P.name}</span> · раунд ${S.round}${S.endTriggered ? ' · <b class="warn">последний раунд</b>' : ''}`;
+    $('#turnTitle').innerHTML = S.phase === 'over' ? 'Игра окончена' : `Ход: <span style="color:${textHex(P.hex)}">${P.name}</span> · раунд ${S.round}${S.endTriggered ? ' · <b class="warn">последний раунд</b>' : ''}`;
     const bD = $('#bDeploy'), bK = $('#bKill'), bS = $('#bSpy'), bE = $('#bEnd'), bA = $('#bAll');
     bD.disabled = !mine || S.pool.p < 1;
     const empty = P.barracks === 0;
@@ -556,7 +604,7 @@ const UI = (() => {
     await new Promise(res => m.append(el('button', { class: 'big', onclick: res }, 'Я готов')));
     closeModal(); lastViewer = p; render();
   }
-  function lightText(p) { const h = S.players[p].hex; return h === '#2a2730' ? '#b9b3c6' : h; }
+  function lightText(p) { return textHex(S.players[p].hex); }
   async function ask(p, req) {
     if (p !== S.cur && humans().length > 1 && lastViewer !== p) await handoff(p, req.text);
     return new Promise(resolve => {
@@ -695,5 +743,5 @@ const UI = (() => {
   }
 
   document.addEventListener('DOMContentLoaded', () => { initSetup(); bindButtons(); bindZoom(); bindPanZoom(); });
-  return { ask, render, humanTurn, showScores, onLog };
+  return { ask, render, humanTurn, showScores, onLog, fx };
 })();

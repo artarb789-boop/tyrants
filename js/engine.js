@@ -26,6 +26,14 @@ const HOUSES = [
   { name: 'Миззрим', hex: '#f28a22' },
   { name: 'Бэнр', hex: '#2a2730' },
 ];
+// цвета на выбор в меню
+const PALETTE = [
+  ['#d8313b', 'красный'], ['#3f7ff2', 'синий'], ['#f28a22', 'оранжевый'], ['#2a2730', 'чёрный'], ['#2fb35a', 'зелёный'],
+  ['#9b4dde', 'фиолетовый'], ['#f2c81f', 'жёлтый'], ['#ff6fb1', 'розовый'], ['#19b9c9', 'бирюзовый'], ['#8a5a36', 'коричневый'],
+];
+// тёмные цвета в тексте заменяем светлым оттенком, иначе не читаются на тёмном фоне
+function isDarkHex(h) { const n = parseInt(h.slice(1), 16); return (0.299 * (n >> 16) + 0.587 * (n >> 8 & 255) + 0.114 * (n & 255)) < 70; }
+const textHex = h => isDarkHex(h) ? '#b9b3c6' : h;
 const CARDS = {};
 CARDS_DATA.forEach(c => { c.asp = ASPECTS[c.aspect] || null; CARDS[c.id] = c; });
 const CARD_BY_NAME = {};
@@ -145,7 +153,7 @@ const sleep = ms => new Promise(r => setTimeout(r, ms));
 function shuffle(a) { for (let i = a.length - 1; i > 0; i--) { const j = Math.floor(Math.random() * (i + 1)); [a[i], a[j]] = [a[j], a[i]]; } return a; }
 function take(arr, x) { const i = arr.indexOf(x); if (i >= 0) arr.splice(i, 1); return i >= 0; }
 const def = uid => CARDS[S.cards[uid]];
-const pn = p => `<b style="color:${S.players[p].hex === '#2a2730' ? '#b9b3c6' : S.players[p].hex}">${S.players[p].name}</b>`;
+const pn = p => `<b style="color:${textHex(S.players[p].hex)}">${S.players[p].name}</b>`;
 const cn = uid => `«${def(uid).name}»`;
 function log(msg) {
   // строки игрока, пока разыгрывается его карта, дописываются в строку «играет …»
@@ -310,6 +318,7 @@ function placeTroop(p, id) {
   return true;
 }
 async function killTroop(p, id) {
+  UI.fx && UI.fx('kill', id);   // интерфейс покажет гибель отряда
   const v = S.occ[id]; S.occ[id] = null;
   const P = S.players[p];
   log(`${pn(p)} уничтожает ${v === 'W' ? 'белый отряд' : 'отряд ' + pn(v)}: ${locName(id)}.`);
