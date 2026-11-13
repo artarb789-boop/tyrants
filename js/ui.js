@@ -34,9 +34,15 @@ const UI = (() => {
   let pending = null;   // { req, resolve }
   let busy = false;     // идёт розыгрыш эффекта / ход бота
   let lastViewer = null;
-  const humans = () => S.players.filter(P => !P.bot).map(P => P.idx);
-  function viewer() { if (!S.players[S.cur].bot) return S.cur; const h = humans(); return h.length ? (lastViewer != null && h.includes(lastViewer) ? lastViewer : h[0]) : null; }
-  const myTurn = () => S && S.phase === 'turn' && !S.players[S.cur].bot && !busy && !pending;
+  // игра по сети: ведущий держит партию, гость видит её копию и шлёт команды
+  const net = { seat: null, host: null, hostBusy: false, seats: {}, online: {}, tokens: {}, asks: new Map(), askSeq: 0, syncT: 0, started: false, lobby: null, join: null };
+  const NET_VER = `1:${CARDS_DATA.length}:${typeof WEB_TILES !== 'undefined' ? WEB_TILES.length : 0}`;   // у гостя должна быть та же версия игры
+  const isGuest = () => NET.role === 'guest', isHost = () => NET.role === 'host';
+  const local = P => !P.bot && !P.remote;   // человек за этим компьютером
+  const humans = () => isGuest() ? [net.seat] : S.players.filter(local).map(P => P.idx);
+  function viewer() { if (isGuest()) return net.seat; if (local(S.players[S.cur])) return S.cur; const h = humans(); return h.length ? (lastViewer != null && h.includes(lastViewer) ? lastViewer : h[0]) : null; }
+  const isBusy = () => isGuest() ? net.hostBusy : busy;
+  const myTurn = () => S && S.phase === 'turn' && !pending && !isBusy() && (isGuest() ? S.cur === net.seat : local(S.players[S.cur]));
 
   // ---------- настройка ----------
   const setup = { n: 2, seats: [], decks: ['drow', 'dragons'], side: 'L', speed: 450, level: 'normal', modules: { pop: false, gems: false } };
@@ -45,6 +51,7 @@ const UI = (() => {
     try { const s = JSON.parse(localStorage.getItem('tyrants.setup') || 'null'); if (s) Object.assign(setup, s); } catch (e) {}
     setup.seats.forEach((s, i) => { if (!s.hex) s.hex = HOUSES[i].hex; });
     setup.palOpen = null;
+    setTimeout(resumeSession, 0);
     // палитра закрывается щелчком мимо
     document.addEventListener('click', e => { if (setup.palOpen != null && !e.target.closest('.palette, .sw.pick')) { setup.palOpen = null; renderSetup(); } });
     renderSetup();
@@ -72,7 +79,10 @@ const UI = (() => {
       r.append(el('span', { class: 'house' }, HOUSES[i].name));
       const inp = el('input', { value: s.name, maxlength: 18 }); inp.oninput = () => { s.name = inp.value; };
       r.append(inp);
-      for (const [b, t] of [[false, 'Человек'], [true, 'Бот']]) r.append(el('button', { class: 'pill' + (s.bot === b ? ' on' : ''), onclick: () => { s.bot = b; renderSetup(); } }, t));
+      const kind = s.net ? 'net' : s.bot ? 'bot' : 'human';
+      for (const [k, t, hint] of [['human', 'Человек', 'играет за этим компьютером'], ['bot', 'Бот', ''], ['net', 'Сеть', 'игрок подключится со своего компьютера по коду комнаты']])
+        r.append(el('button', { class: 'pill' + (kind === k ? ' on' : ''), title: hint, onclick: () => { s.bot = k === 'bot'; s.net = k === 'net'; renderSetup(); } }, t));
+      if (s.net) { inp.disabled = true; inp.value = 'имя придёт от игрока'; }
       seats.append(r);
     }
     box.append(seats);
@@ -118,18 +128,239 @@ const UI = (() => {
     box.append(lRow);
     const ok = setup.decks.length === 2;
     box.append(el('div', { class: 'row' }, `<span class="hint">${setup.board === 'web' ? 'Поле из гексов собирается под число игроков.' : setup.n === 2 ? 'Вдвоём играется только центральная часть поля.' : setup.n === 3 ? 'Втроём — центр и одна боковая часть.' : 'Вчетвером — всё поле.'} Первая партия — рекомендуются Дроу + Драконы.</span>`));
-    const st = el('button', { class: 'big', onclick: start }, 'Начать партию'); if (!ok) st.disabled = true;
+    const hasNet = setup.seats.slice(0, setup.n).some(s => s.net);
+    const st = el('button', { class: 'big', onclick: start }, hasNet ? 'Создать комнату' : 'Начать партию'); if (!ok) st.disabled = true;
     box.append(st);
+    box.append(el('button', { class: 'joinBtn', onclick: joinDialog, title: 'Друг создал комнату — введите его код' }, 'Присоединиться к игре по коду'));
   }
   async function start() {
     try { localStorage.setItem('tyrants.setup', JSON.stringify(setup)); } catch (e) {}
-    const players = setup.seats.slice(0, setup.n).map((s, i) => ({ name: s.name.trim() || HOUSES[i].name, bot: s.bot, level: setup.level || 'normal', hex: s.hex || HOUSES[i].hex, house: HOUSES[i].name }));
+    const seats = setup.seats.slice(0, setup.n);
+    let names = {};
+    if (seats.some(s => s.net)) { names = await hostLobby(seats); if (!names) return; }
+    const players = seats.map((s, i) => ({ name: names[i] || s.name.trim() || HOUSES[i].name, bot: s.bot && !s.net, remote: !!s.net, level: setup.level || 'normal', hex: s.hex || HOUSES[i].hex, house: HOUSES[i].name }));
     newGame({ players, decks: setup.decks, side: setup.side, botDelay: setup.speed, modules: setup.modules, board: setup.board || 'base', xhex: setup.board === 'web' && !!setup.xhex, center: setup.board === 'web' && setup.center || null });
+    showGame();
+    if (isHost()) { net.started = true; for (const seat in net.seats) sendStart(+seat); }
+    await initialDeploy();
+    await startTurn();
+  }
+  function showGame() {
     $('#setup').classList.add('hidden'); $('#game').classList.remove('hidden');
     $('#log').innerHTML = ''; S.log.forEach(m => onLog(m)); logNew = 0; setTab('game');
     buildBoardStatic(); render();
-    await initialDeploy();
-    await startTurn();
+  }
+
+  // ---------- игра по сети: ведущий ----------
+  const toGuests = msg => { for (const seat in net.seats) if (net.online[seat]) NET.send(net.seats[seat], msg); };
+  const seatOfPeer = id => { for (const s in net.seats) if (net.seats[s] === id) return +s; return null; };
+  function stateMsg() { const s = Object.assign({}, S); delete s.log; return s; }
+  function sendStart(seat) {
+    const id = net.seats[seat]; if (!id) return;
+    NET.send(id, { t: 'start', seat, S: stateMsg(), sections: T.sections, log: S.log.slice(-300), busy });
+    for (const [k, a] of net.asks) if (a.p === seat) NET.send(id, { t: 'ask', id: k, req: a.req });   // незакрытые вопросы — заново
+  }
+  // состояние рассылается не чаще раза в 60 мс; перед вопросом и в конце партии — сразу
+  function scheduleSync() { if (!isHost() || !net.started || net.syncT) return; net.syncT = setTimeout(flushSync, 60); }
+  function flushSync() { clearTimeout(net.syncT); net.syncT = 0; if (isHost() && net.started) toGuests({ t: 'sync', S: stateMsg(), busy }); }
+  function hostMsg(from, m) {
+    if (m.t === 'hello') return hostHello(from, m);
+    const seat = seatOfPeer(from); if (seat == null) return;
+    if (m.t === 'answer') { const a = net.asks.get(m.id); if (a && a.p === seat) { net.asks.delete(m.id); a.resolve(decodeAnswer(a.req, m.v)); render(); } return; }
+    if (m.t === 'cmd') {
+      if (net.started && S.cur === seat && S.players[seat].remote && S.phase === 'turn' && !busy && !pending && !net.asks.size) exec(m.c);
+      flushSync();   // гость ждёт ответа, даже если команда не прошла
+    }
+  }
+  function hostHello(from, m) {
+    const refuse = text => { NET.send(from, { t: 'refuse', text }); setTimeout(() => NET.kick(from), 500); };
+    if (m.ver !== NET_VER) return refuse('У вас другая версия игры. Нужна та же, что у ведущего.');
+    const name = String(m.name || '').trim().slice(0, 18), token = String(m.token || '');
+    const take = seat => { const old = net.seats[seat]; if (old && old !== from) NET.kick(old); net.seats[seat] = from; net.online[seat] = true; net.tokens[seat] = token; };
+    if (!net.started) {
+      if (!net.lobby) return refuse('Партия ещё не создана.');
+      // тот же гость после перезагрузки — на своё место, новый — на первое свободное
+      let free = token ? net.lobby.seats.findIndex((s, i) => s.net && net.tokens[i] === token) : -1;
+      if (free < 0) free = net.lobby.seats.findIndex((s, i) => s.net && !net.seats[i]);
+      if (free < 0) return refuse('Все места для сетевых игроков уже заняты.');
+      take(free); net.lobby.names[free] = name || HOUSES[free].name;
+      NET.send(from, { t: 'lobby', seat: free, house: HOUSES[free].name, hex: net.lobby.seats[free].hex, code: NET.code });
+      net.lobby.draw(); return;
+    }
+    // партия идёт — вернуть отключившегося игрока на его место
+    // по ключу — даже если ведущий ещё не заметил обрыв; иначе — отключившийся с тем же именем или любой отключившийся
+    const cands = S.players.filter(P => P.remote && !net.online[P.idx]);
+    const P = (token && S.players.find(P => P.remote && net.tokens[P.idx] === token)) || cands.find(P => P.name === name) || cands[0];
+    if (!P) return refuse('Партия уже идёт, свободных мест нет. Возможно, ваше место уже отдано боту.');
+    take(P.idx);
+    sendStart(P.idx); flash(`${P.name} снова в игре`, 2500); render();
+  }
+  function hostClose(from) {
+    const seat = seatOfPeer(from); if (seat == null) return;
+    net.online[seat] = false;
+    if (!net.started) { delete net.seats[seat]; if (net.lobby) { delete net.lobby.names[seat]; net.lobby.draw(); } return; }
+    flash(`${S.players[seat].name} отключился — можно подождать или отдать место боту`, 4000); render();
+  }
+  function hostLobby(seats) {
+    const m = openModal(); m.classList.add('lobby');
+    m.innerHTML = '<h2>Комната для игры по сети</h2><p class="dim">Создаю комнату…</p>';
+    return new Promise(async resolve => {
+      let code;
+      try { code = await NET.host({ msg: hostMsg, close: hostClose, error: t => flash(t, 3500) }); }
+      catch (e) { m.innerHTML = `<h2>Не получилось создать комнату</h2><p>${e.message}</p>`; m.append(el('button', { class: 'skip', onclick: closeModal }, 'Закрыть')); return resolve(null); }
+      const finish = names => { net.lobby = null; closeModal(); resolve(names); };
+      net.lobby = { seats, names: {}, draw };
+      function draw() {
+        m.innerHTML = '';
+        m.append(el('h2', {}, 'Комната для игры по сети'));
+        m.append(el('p', {}, 'Сообщите код другу. Он открывает свою копию игры, нажимает «Присоединиться к игре по коду» и вводит этот код.'));
+        const row = el('div', { class: 'row' });
+        row.append(el('div', { class: 'roomCode' }, code));
+        row.append(el('button', { class: 'mini', onclick: e => { navigator.clipboard && navigator.clipboard.writeText(code); e.target.textContent = 'Скопировано'; } }, 'Копировать'));
+        m.append(row);
+        for (const [i, s] of seats.entries()) {
+          const st = s.net ? (net.lobby.names[i] ? `<b class="ok">✓ ${net.lobby.names[i]}</b> — подключён` : '<span class="dim">ждём игрока…</span>') : s.bot ? 'бот' : `${s.name || 'Игрок'} — за этим компьютером`;
+          m.append(el('div', { class: 'lobbySeat' }, `<span class="sw" style="background:${s.hex}"></span><span class="house">${HOUSES[i].name}</span>${st}`));
+        }
+        const ready = seats.every((s, i) => !s.net || net.seats[i]);
+        const brow = el('div', { class: 'brow end' });
+        brow.append(el('button', { class: 'skip', onclick: () => { NET.close(); net.seats = {}; net.online = {}; finish(null); } }, 'Отмена'));
+        const go = el('button', { class: 'opt', onclick: () => finish({ ...net.lobby.names }) }, 'Начать партию'); go.disabled = !ready;
+        brow.append(go); m.append(brow);
+      }
+      draw();
+    });
+  }
+  // ответ гостя приходит номером варианта — превращаем обратно в вариант
+  function encodeAnswer(req, v) {
+    if (v == null) return null;
+    if (req.kind === 'board') return req.opts.indexOf(v);
+    if (req.kind === 'choice') return req.options.findIndex(o => o.value === v);
+    return v;
+  }
+  function decodeAnswer(req, v) {
+    if (v == null || v === -1) return null;
+    if (req.kind === 'board') return req.opts[v] || null;
+    if (req.kind === 'choice') return req.options[v] ? req.options[v].value : null;
+    return v;
+  }
+  function netAsk(p, req) {
+    return new Promise(resolve => {
+      const id = ++net.askSeq; net.asks.set(id, { p, req, resolve });
+      flushSync(); if (net.online[p]) NET.send(net.seats[p], { t: 'ask', id, req });
+      render();
+    });
+  }
+  // отключившегося игрока заменяет бот
+  function convertToBot(p) {
+    const P = S.players[p]; P.remote = false; P.bot = true; P.level = setup.level || 'normal';
+    const id = net.seats[p]; delete net.seats[p]; net.online[p] = false; if (id) NET.kick(id);
+    log(`${pn(p)}: дальше за этого игрока ходит бот.`);
+    for (const [k, a] of [...net.asks]) if (a.p === p) { net.asks.delete(k); Promise.resolve(AI.resolve(p, a.req)).then(a.resolve); }
+    const go = () => {
+      if (busy) return setTimeout(go, 200);
+      if (S.cur !== p || S.phase !== 'turn') return render();
+      busy = true; render();
+      (async () => { try { await AI.takeTurn(p); await endTurn(); } catch (e) { console.error(e); } busy = false; render(); })();
+    };
+    go();
+  }
+
+  // ---------- игра по сети: гость ----------
+  // ключ этой вкладки: после перезагрузки ведущий узнаёт гостя и возвращает на его место
+  const store = (kind, key, val) => { try { const st = kind === 's' ? sessionStorage : localStorage; if (val === undefined) return JSON.parse(st.getItem(key) || 'null'); if (val === null) st.removeItem(key); else st.setItem(key, JSON.stringify(val)); } catch (e) { return null; } };
+  const myToken = store('s', 'tyrants.netToken') || (() => { const t = Math.random().toString(36).slice(2) + Date.now().toString(36); store('s', 'tyrants.netToken', t); return t; })();
+  const saveSession = () => { store('s', 'tyrants.netSession', { ...net.join, t: Date.now() }); store('l', 'tyrants.lastJoin', net.join); };
+  const dropSession = () => store('s', 'tyrants.netSession', null);
+  const rj = { on: false, tries: 0, timer: 0 };   // автоматическое переподключение
+  function banner(text) {
+    const b = $('#netBanner'); b.classList.toggle('hidden', !text); if (!text) return;
+    b.innerHTML = ''; b.append(el('span', {}, text));
+    b.append(el('button', { class: 'mini', onclick: () => { stopRejoin(); dropSession(); NET.close(); location.reload(); } }, 'Выйти из партии'));
+  }
+  function joinStatus(text) { const st = document.querySelector('.lobby .jStatus'); if (st) st.textContent = text; else if (!rj.on) flash(text, 4000); }
+  function connectOnce() {
+    clearTimeout(rj.timer);
+    const { name, code } = net.join;
+    NET.close();
+    NET.join(code, { msg: guestMsg, open: id => NET.send(id, { t: 'hello', name, token: myToken, ver: NET_VER }), close: guestLost, error: connFail })
+      .then(id => { net.host = id; }, e => connFail(e.message));
+    rj.timer = setTimeout(() => connFail('ведущий не отвечает'), 10000);   // ответа нет — следующая попытка
+  }
+  function connFail(text) {
+    clearTimeout(rj.timer);
+    if (!rj.on) { joinStatus(text); return; }
+    // пауза между попытками растёт: 1, 2, 4, 8, 10 секунд
+    const d = Math.min(10000, 1000 * 2 ** Math.min(rj.tries, 4)); rj.tries++;
+    banner(`Связь с ведущим потеряна. Переподключаюсь… (попытка ${rj.tries + 1})`);
+    rj.timer = setTimeout(() => { if (rj.on) connectOnce(); }, d);
+  }
+  function startRejoin(text) { rj.on = true; rj.tries = 0; banner(text); connectOnce(); }
+  function stopRejoin() { rj.on = false; clearTimeout(rj.timer); banner(null); }
+  function joinDialog() {
+    const last = net.join || store('l', 'tyrants.lastJoin') || {};
+    const m = openModal(); m.classList.add('lobby');
+    const name = el('input', { value: last.name || setup.seats[0].name || 'Игрок', maxlength: 18 });
+    const code = el('input', { value: last.code || '', maxlength: 5, placeholder: 'ABCDE', class: 'codeIn' });
+    const status = el('p', { class: 'dim jStatus' }, 'Нужен интернет. Игра у вас и у ведущего должна быть одной версии.');
+    const go = el('button', { class: 'opt', onclick: () => guestConnect(name.value.trim() || 'Игрок', code.value.trim().toUpperCase()) }, 'Подключиться');
+    m.append(el('h2', {}, 'Присоединиться к игре'));
+    const r1 = el('div', { class: 'row seat' }, '<span class="lbl">Ваше имя:</span>'); r1.append(name); m.append(r1);
+    const r2 = el('div', { class: 'row seat' }, '<span class="lbl">Код комнаты:</span>'); r2.append(code); m.append(r2);
+    m.append(status);
+    const brow = el('div', { class: 'brow end' });
+    brow.append(el('button', { class: 'skip', onclick: () => { stopRejoin(); NET.close(); closeModal(); } }, 'Отмена')); brow.append(go);
+    m.append(brow); code.focus();
+  }
+  function guestConnect(name, code) {
+    if (code.length < 5) { joinStatus('Введите код из 5 символов.'); return; }
+    net.join = { name, code }; rj.on = false;
+    joinStatus('Подключаюсь…');
+    connectOnce();
+  }
+  function guestMsg(from, m) {
+    if (m.t === 'refuse') {
+      const wasRejoin = rj.on; stopRejoin(); dropSession(); NET.close();
+      if (S || wasRejoin) { const box = openModal(); box.classList.add('confirm'); box.append(el('h3', {}, 'Вернуться в партию не получилось'));
+        box.append(el('p', {}, m.text)); box.append(el('button', { class: 'opt', onclick: () => location.reload() }, 'В меню')); }
+      else joinStatus(m.text);
+      return;
+    }
+    if (m.t === 'lobby') {
+      net.seat = m.seat; stopRejoin(); saveSession();
+      const box = openModal(); box.classList.add('lobby');
+      box.append(el('h2', {}, `Вы в комнате ${m.code}`));
+      box.append(el('p', {}, `Ваш дом: <span class="sw" style="background:${m.hex}"></span> <b>${m.house}</b>. Ждём, пока ведущий начнёт партию…`));
+      box.append(el('button', { class: 'skip', onclick: () => { stopRejoin(); dropSession(); NET.close(); closeModal(); } }, 'Выйти из комнаты'));
+      return;
+    }
+    if (m.t === 'start') {
+      const back = !!S; stopRejoin(); saveSession();
+      net.seat = m.seat; net.hostBusy = m.busy; pending = null; closeModal();
+      S = m.S; S.log = []; setBoard(S.board); T = buildTopology(m.sections);
+      showGame(); m.log.forEach(x => onLog(x)); logNew = 0; updTabs();
+      if (back) flash('Связь восстановлена', 2000);
+      return;
+    }
+    if (!S) return;
+    if (m.t === 'sync') { S = m.S; S.log = []; net.hostBusy = m.busy; render(); }
+    else if (m.t === 'log') onLog(m.msg, m.replace);
+    else if (m.t === 'fx') fx(m.kind, m.id);
+    else if (m.t === 'ask') { pending = null; showAsk(m.req).then(v => NET.send(net.host, { t: 'answer', id: m.id, v: encodeAnswer(m.req, v) })); }
+    else if (m.t === 'over') { dropSession(); render(); showScores(); }
+  }
+  function guestLost() {
+    if (rj.on) return connFail('нет связи');
+    if (!net.join) return;
+    if (S || net.seat != null) startRejoin('Связь с ведущим потеряна. Переподключаюсь…');   // в партии или в комнате — пробуем сами
+    else joinStatus('Связь с ведущим потеряна.');
+  }
+  // страницу перезагрузили посреди партии — возвращаемся сами
+  function resumeSession() {
+    const ses = store('s', 'tyrants.netSession');
+    if (!ses || Date.now() - ses.t > 12 * 3600e3) return;
+    net.join = { name: ses.name, code: ses.code };
+    startRejoin(`Возвращаюсь в партию ${ses.code}…`);
   }
 
   // ---------- поле ----------
@@ -275,7 +506,7 @@ const UI = (() => {
     node.classList.add('popIn'); node.style.animationDelay = `${-(now - t)}ms`;
   }
   const pendingKill = new Set();   // локации, где отряд только что уничтожен
-  function fx(kind, id) { if (kind === 'kill') pendingKill.add(id); }
+  function fx(kind, id) { if (kind === 'kill') pendingKill.add(id); if (isHost() && net.started) toGuests({ t: 'fx', kind, id }); }
   // кружок раскалывается на куски, они разлетаются и под «силой тяжести» падают вниз за экран
   function shatter(l, fill, stroke) {
     const probe = sv('circle', { cx: l.x, cy: l.y, r: 21, fill: 'none' }); $('#gFx').append(probe);
@@ -423,7 +654,8 @@ const UI = (() => {
         return `<span class="tokChip${tk.full ? ' full' : ''}" title="${tokTitle(r)}">${tk.full ? '★ ' : ''}<b>${REG[r].name}</b> ${gives}</span>`;
       }).join('');
       const d = el('div', { class: 'pl' + (P.idx === S.cur ? ' cur' : '') });
-      d.innerHTML = `<div class="plTop"><span class="sw" style="background:${P.hex}"></span><b>${P.name}</b>${P.bot ? ` <span class="tag">${LEVEL_RU[P.level] || 'бот'}</span>` : ''}${P.idx === S.first ? ' <span class="tag">1-й</span>' : ''}
+      d.innerHTML = `<div class="plTop"><span class="sw" style="background:${P.hex}"></span><b>${P.name}</b>${P.bot ? ` <span class="tag">${LEVEL_RU[P.level] || 'бот'}</span>` : ''}${isGuest() && P.idx === net.seat ? ' <span class="tag me">вы</span>' : ''}${P.remote ? (isHost() && !net.online[P.idx]
+          ? ' <span class="tag off">нет связи</span> <a class="toBot" title="Дальше за этого игрока будет ходить бот">отдать боту</a>' : ' <span class="tag netTag">по сети</span>') : ''}${P.idx === S.first ? ' <span class="tag">1-й</span>' : ''}
         <span class="vpTotal" title="Очки, если игра закончится сейчас">≈ ${sc.total} ПО</span></div>
         <div class="plStats">
           <span title="Отряды в казармах">🛡 ${P.barracks}</span>
@@ -437,6 +669,7 @@ const UI = (() => {
           ${S.modules.gems ? `<span title="Камни: синие / красные / фиолетовые">💎 ${P.gems.blue}/${P.gems.red}/${P.gems.purple}</span>` : ''}
         </div>${toks ? `<div class="plToks">${toks}</div>` : ''}`;
       d.querySelector('.inner').onclick = () => showZone(`Внутренний круг: ${P.name}`, P.inner);
+      const tb = d.querySelector('.toBot'); if (tb) tb.onclick = async () => { if (await confirmBox(`Отдать место игрока ${P.name} боту? Вернуться в эту партию он уже не сможет.`)) convertToBot(P.idx); };
       const wb = d.querySelector('.web'); if (wb) wb.onclick = () => showZone(`Паутина: ${P.name}`, P.web);
       box.append(d);
     }
@@ -447,7 +680,7 @@ const UI = (() => {
     S.market.forEach((u, i) => {
       if (u == null) { box.append(el('div', { class: 'card slot' })); return; }
       const c = costOf(u);
-      const im = cardImg(u, 'mk' + (canBuy && S.pool.i >= c ? ' afford' : ''), () => { if (myTurn()) doBuy({ uid: u, src: 'market', slot: i, cost: c }); });
+      const im = cardImg(u, 'mk' + (canBuy && S.pool.i >= c ? ' afford' : ''), () => buyCmd(u, c));
       box.append(im);
     });
     $('#mdeckCount').textContent = S.mdeck.length;
@@ -456,7 +689,7 @@ const UI = (() => {
       const w = el('div', { class: 'pile' });
       if (uids.length) {
         const u = uids[uids.length - 1];
-        w.append(cardImg(u, 'sp' + (canBuy && cost != null && S.pool.i >= cost ? ' afford' : ''), () => { if (myTurn() && cost != null) doBuy({ uid: u, src, cost }); }));
+        w.append(cardImg(u, 'sp' + (canBuy && cost != null && S.pool.i >= cost ? ' afford' : ''), () => { if (cost != null) buyCmd(u, cost); }));
       } else w.append(el('div', { class: 'card sp slot' }));
       w.append(el('div', { class: 'pileN' }, `${label}: ${uids.length}`));
       sup.append(w);
@@ -469,7 +702,7 @@ const UI = (() => {
     if (S.devoured.length) {
       const u = S.devoured[S.devoured.length - 1], c = costOf(u);
       const buyable = S.flags.devouredBuy && c != null;
-      dv.append(cardImg(u, 'sp dim' + (buyable ? ' afford' : ''), () => { if (myTurn() && buyable) doBuy({ uid: u, src: 'devoured', cost: c }); }));
+      dv.append(cardImg(u, 'sp dim' + (buyable ? ' afford' : ''), () => { if (buyable) buyCmd(u, c); }));
     } else dv.append(el('div', { class: 'card sp slot' }));
     const lnk = el('a', { class: 'pileN' }, `Поглощено: ${S.devoured.length}`); lnk.onclick = () => showZone('Поглощённые карты', S.devoured);
     dv.append(lnk); sup.append(dv);
@@ -487,29 +720,29 @@ const UI = (() => {
     if (S.endTriggered && !endShown) { endShown = true; flash('Условие конца игры: раунд доигрывается до конца', 3500); } bK.disabled = !mine || S.pool.p < 3; bS.disabled = !mine || S.pool.p < 3;
     bE.disabled = !mine; bA.disabled = !mine || !P.hand.length;
     const gb = $('#gems'); gb.innerHTML = '';
-    if (S.modules.gems && !P.bot) for (const g of ['blue', 'red', 'purple']) if (P.gems[g]) {
+    const v = viewer();
+    if (S.modules.gems && v === S.cur) for (const g of ['blue', 'red', 'purple']) if (P.gems[g]) {
       const b = el('button', { class: 'gemBtn ' + g, title: 'Потратить камень' }, `💎×${P.gems[g]} <small>${g === 'blue' ? '+1' + POW : g === 'red' ? '+1' + INF : '+1' + POW + ' +1' + INF}</small>`);
-      b.disabled = !mine; b.onclick = () => { if (myTurn()) { spendGem(S.cur, g); render(); } };
+      b.disabled = !mine; b.onclick = () => command({ t: 'gem', g });
       gb.append(b);
     }
-    if (S.board.web && !P.bot) {
+    if (S.board.web && v === S.cur) {
       const spots = stoneSpots(S.cur);
       if (spots.length && !S.flags.stoneTaken) {
         const b = el('button', { class: 'gemBtn purple', title: 'Ваш отряд стоит на Камне Силы' }, `Взять камень <small>1${POW}</small>`);
-        b.disabled = !mine || S.pool.p < 1; b.onclick = () => { if (myTurn()) { captureStone(S.cur, spots[0]); render(); } };
+        b.disabled = !mine || S.pool.p < 1; b.onclick = () => command({ t: 'capture' });
         gb.append(b);
       }
       const free = P.stones - P.stonesNew;
       if (P.stones) for (const [k, t] of [['p', '+3' + POW], ['i', '+3' + INF]]) {
         const b = el('button', { class: 'gemBtn', title: free ? 'Потратить Камень Силы' : 'Камень нельзя тратить в ход захвата' }, `◆×${P.stones} <small>${t}</small>`);
-        b.disabled = !mine || !free; b.onclick = () => { if (myTurn()) { spendStone(S.cur, k); render(); } };
+        b.disabled = !mine || !free; b.onclick = () => command({ t: 'stone', k });
         gb.append(b);
       }
     }
-    const v = viewer();
     const hand = $('#hand'); hand.innerHTML = '';
     $('#handTitle').textContent = v == null ? 'Рука' : v === S.cur ? 'Ваша рука' : `Рука: ${S.players[v].name} (ждёт хода)`;
-    if (v != null) for (const u of S.players[v].hand) hand.append(cardImg(u, 'hd' + (mine && v === S.cur ? ' playable' : ''), () => { if (myTurn() && v === S.cur) doPlay(u); }));
+    if (v != null) for (const u of S.players[v].hand) hand.append(cardImg(u, 'hd' + (mine && v === S.cur ? ' playable' : ''), () => { if (v === S.cur) command({ t: 'play', uid: u }); }));
     const pl = $('#played'); pl.innerHTML = '';
     for (const u of S.played) pl.append(cardImg(u, 'pd'));
     const pr = $('#prompt');
@@ -518,19 +751,24 @@ const UI = (() => {
       pr.innerHTML = `<span class="ptext">${pending.req.text}${series ? ` <span class="dim">· силы хватит на ${S.pool.p}</span>` : ''}</span>`;
       if (pending.req.optional) pr.append(el('button', { class: 'skip', onclick: () => answer(null) }, series ? 'Готово' : 'Пропустить'));
       pr.classList.add('active');
-    } else if (S.phase === 'turn' && !P.bot && !busy && !pending) {
+    } else if (myTurn()) {
       pr.innerHTML = '<span class="ptext dim">Сыграйте карты с руки, нанимайте слуг на рынке, тратьте силу на действия.</span>'; pr.classList.remove('active');
-    } else if (P.bot && S.phase !== 'over') { pr.innerHTML = `<span class="ptext dim">Ходит бот ${P.name}…</span>`; pr.classList.remove('active'); }
-    else { pr.innerHTML = ''; pr.classList.remove('active'); }
+    } else if (S.phase !== 'over') {
+      const wait = [...net.asks.values()][0];
+      const t = wait ? `Ждём, пока ${S.players[wait.p].name} сделает выбор…` : S.cur !== v ? `Ходит ${P.bot ? 'бот ' : ''}${P.name}${P.remote && !isGuest() ? ' (по сети)' : ''}…` : '';
+      pr.innerHTML = t ? `<span class="ptext dim">${t}</span>` : ''; pr.classList.remove('active');
+    } else { pr.innerHTML = ''; pr.classList.remove('active'); }
   }
   function render() {
     if (!S) return;
     renderBoard(); renderPlayers(); renderMarket(); renderTurn(); updTabs();
+    if (isHost()) scheduleSync();
     // карта под курсором могла исчезнуть после перерисовки
     const under = document.elementFromPoint(mouse.x, mouse.y);
     if (!under || !under.dataset || !under.dataset.cid) hideZoom();
   }
   function onLog(msg, replaceLast) {
+    if (isHost() && net.started) toGuests({ t: 'log', msg, replace: !!replaceLast });
     const box = $('#log'); if (!box) return;
     if (replaceLast && box.lastChild) { box.lastChild.innerHTML = msg; return; }
     box.append(el('div', { class: 'lg' }, msg));
@@ -559,38 +797,61 @@ const UI = (() => {
     try { await fn(); } catch (e) { console.error(e); log(`<span class="warn">Ошибка: ${e.message}</span>`); }
     busy = false; render();
   }
-  function doPlay(u) { run(() => playCard(S.cur, u)); }
-  function doBuy(b) { if (S.pool.i < b.cost) { flash('Не хватает влияния'); return; } run(async () => buy(S.cur, b)); }
+  // действие игрока: у ведущего выполняется сразу, у гостя уходит ведущему
+  function command(c) {
+    if (!myTurn()) return;
+    if (isGuest()) { net.hostBusy = true; NET.send(net.host, { t: 'cmd', c }); render(); return; }
+    exec(c);
+  }
+  function buyCmd(uid, cost) { if (!myTurn()) return; if (S.pool.i < cost) { flash('Не хватает влияния'); return; } command({ t: 'buy', uid }); }
+  // выполнить действие текущего игрока (своего или сетевого)
+  function exec(c) {
+    const p = S.cur, P = S.players[p];
+    switch (c.t) {
+      case 'play': if (P.hand.includes(c.uid)) run(() => playCard(p, c.uid)); break;
+      case 'buy': { const b = buyables(p).find(x => x.uid === c.uid); if (b && S.pool.i >= b.cost) run(async () => buy(p, b)); break; }
+      // отряды выставляются подряд, пока хватает силы; «Готово» — закончить
+      case 'deploy': run(async () => {
+        do { const p0 = S.pool.p; await actDeploy(p); if (S.pool.p === p0) break; render(); }
+        while (S.pool.p >= 1 && P.barracks > 0 && S.phase === 'turn');
+      }); break;
+      case 'kill': run(() => actAssassinate(p)); break;
+      case 'spy': run(() => actReturnSpy(p)); break;
+      // сначала простые карты ресурсов, потом остальные по одной
+      case 'all': run(async () => { for (const u of P.hand.filter(x => ['Знать', 'Солдат', 'Страж Дома', 'Жрица Ллот'].includes(def(x).name))) await playCard(p, u); }); break;
+      case 'gem': if (P.gems[c.g]) { spendGem(p, c.g); render(); } break;
+      case 'stone': if (P.stones - P.stonesNew > 0) { spendStone(p, c.k); render(); } break;
+      case 'capture': { const sp = stoneSpots(p); if (sp.length && !S.flags.stoneTaken && S.pool.p >= 1) captureStone(p, sp[0]); render(); break; }
+      case 'end': (async () => {
+        busy = true; render();
+        try { await endTurn(); } catch (e) { console.error(e); log(`<span class="warn">Ошибка: ${e.message}</span>`); }
+        busy = false; render();
+      })(); break;
+    }
+  }
   let endShown = false;
   function flash(t, ms = 1400) { const f = $('#flash'); f.textContent = t; f.classList.add('show'); clearTimeout(flash.t); flash.t = setTimeout(() => f.classList.remove('show'), ms); }
   function bindButtons() {
-    // отряды выставляются подряд, пока хватает силы; «Готово» — закончить
-    $('#bDeploy').onclick = () => myTurn() && run(async () => {
-      do { const p0 = S.pool.p; await actDeploy(S.cur); if (S.pool.p === p0) break; render(); }
-      while (S.pool.p >= 1 && S.players[S.cur].barracks > 0 && S.phase === 'turn');
-    });
-    $('#bKill').onclick = () => myTurn() && run(() => actAssassinate(S.cur));
-    $('#bSpy').onclick = () => myTurn() && run(() => actReturnSpy(S.cur));
-    $('#bAll').onclick = () => myTurn() && run(async () => {
-      const P = S.players[S.cur];
-      // сначала простые карты ресурсов, потом остальные по одной
-      for (const u of P.hand.filter(x => ['Знать', 'Солдат', 'Страж Дома', 'Жрица Ллот'].includes(def(x).name))) await playCard(S.cur, u);
-      render();
-    });
+    $('#bDeploy').onclick = () => command({ t: 'deploy' });
+    $('#bKill').onclick = () => command({ t: 'kill' });
+    $('#bSpy').onclick = () => command({ t: 'spy' });
+    $('#bAll').onclick = () => command({ t: 'all' });
     $('#bEnd').onclick = async () => {
       if (!myTurn()) return;
       const P = S.players[S.cur];
       if ((P.hand.length || S.pool.p || S.pool.i) && !await confirmBox(`Завершить ход? ${P.hand.length ? `В руке ещё ${P.hand.length} карт. ` : ''}${S.pool.p || S.pool.i ? 'Неистраченные ресурсы сгорят.' : ''}`)) return;
-      busy = true; render();
-      try { await endTurn(); } catch (e) { console.error(e); log(`<span class="warn">Ошибка: ${e.message}</span>`); }
-      busy = false; render();
+      command({ t: 'end' });
     };
     $('#bRules').onclick = showRules;
     $('#tabGame').onclick = () => setTab('game');
     $('#tabLog').onclick = () => setTab('log');
-    $('#bMenu').onclick = async () => { if (await confirmBox('Выйти в меню? Текущая партия будет потеряна.')) location.reload(); };
+    $('#bMenu').onclick = async () => {
+      const t = isHost() ? 'Выйти в меню? Партия закончится и у сетевых игроков.' : isGuest() ? 'Выйти из партии? Ведущий сможет отдать ваше место боту.' : 'Выйти в меню? Текущая партия будет потеряна.';
+      if (await confirmBox(t)) { dropSession(); stopRejoin(); NET.close(); location.reload(); }
+    };
   }
   async function humanTurn() {
+    if (S.players[S.cur].remote) { render(); return; }   // сетевой игрок ходит командами
     if (humans().length > 1 && lastViewer !== S.cur) await handoff(S.cur, 'Ваш ход');
     lastViewer = S.cur;
     render();
@@ -606,7 +867,11 @@ const UI = (() => {
   }
   function lightText(p) { return textHex(S.players[p].hex); }
   async function ask(p, req) {
+    if (S.players[p].remote) return netAsk(p, req);
     if (p !== S.cur && humans().length > 1 && lastViewer !== p) await handoff(p, req.text);
+    return showAsk(req);
+  }
+  function showAsk(req) {
     return new Promise(resolve => {
       pending = { req, resolve };
       if (req.kind === 'board') { render(); return; }
@@ -689,6 +954,7 @@ const UI = (() => {
     });
   }
   function showScores() {
+    if (isHost() && net.started) { flushSync(); toGuests({ t: 'over' }); }
     const m = openModal(true);
     const rows = [['ctrl', 'Контролируемые регионы'], ['full', 'Полный контроль (по 2 ПО)'], ['trophies', 'Трофейный зал'], ['deckVp', 'Карты в колоде, руке, сбросе'], ['innerVp', 'Внутренний круг'], ['tokens', 'Жетоны ПО'], ['total', 'Итого']];
     const sc = S.players.map(P => scoreOf(P.idx));
@@ -717,7 +983,7 @@ const UI = (() => {
       <p><b>Фанатские дополнения.</b> <i>Осада</i> и <i>Юголоты</i> — новые колоды рынка; <i>Паукообразные</i> добавляют паутину игрока (карты в ней считаются колодой в конце игры и усиливают пауков по аспектам) и Отравленных слуг (−1 ПО, избавиться — вернуть своего шпиона или 2 своих отряда из региона).
       <i>Места Силы</i> — другие бонусы полного контроля на жетонах (в начале хода). <i>Камни Тьмы</i> — под белыми отрядами лежат камни: уничтожив отряд, можно вернуть его в запас и забрать камень (+1 сила / +1 влияние) или взять в трофеи, убрав камень.
       <i>Демоническая паутина</i> — поле из гексов: камни силы ◆ на тупиках маршрутов захватываются отрядом за 1 силу (1 за ход) и тратятся со следующего хода на +3 силы или +3 влияния. <i>X-гексы</i> (по желанию): один случайный X-гекс заменяет гекс C; в «Пустоши» и «Равнодушие» не ведёт ни один маршрут — туда попадают шпионом.</p>
-      <p><b>Подсказки</b>: поле приближается колесом мыши или кнопками ＋/－ справа сверху и перетаскивается мышью; ⤢ — показать всё поле. Вращение — как камера в стратегиях: зажмите ⟲/⟳ или клавиши Q/E, либо тяните поле правой (средней) кнопкой мыши. «Отправить отряд» выставляет отряды подряд, пока хватает силы («Готово» — закончить). Вкладка «Журнал» сверху — история партии. Сложность ботов выбирается в меню: лёгкие ошибаются и тратят не всю силу, тяжёлые следят за лидером и реже размениваются на убийства. Наведите курсор на карту — она увеличится; на регион — увидите расклад сил. Значок 👑 у игрока — посмотреть внутренний круг.</p></div>`;
+      <p><b>Подсказки</b>: поле приближается колесом мыши или кнопками ＋/－ справа сверху и перетаскивается мышью; ⤢ — показать всё поле. Вращение — как камера в стратегиях: зажмите ⟲/⟳ или клавиши Q/E, либо тяните поле правой (средней) кнопкой мыши. «Отправить отряд» выставляет отряды подряд, пока хватает силы («Готово» — закончить). Вкладка «Журнал» сверху — история партии. <b>Игра по сети</b>: поставьте у места «Сеть» и нажмите «Создать комнату» — друг открывает свою копию игры, жмёт «Присоединиться к игре по коду» и вводит код; ваша партия ведётся на вашем компьютере, вместе с ботами. Сложность ботов выбирается в меню: лёгкие ошибаются и тратят не всю силу, тяжёлые следят за лидером и реже размениваются на убийства. Наведите курсор на карту — она увеличится; на регион — увидите расклад сил. Значок 👑 у игрока — посмотреть внутренний круг.</p></div>`;
     m.append(el('button', { class: 'skip', onclick: closeModal }, 'Закрыть'));
   }
 

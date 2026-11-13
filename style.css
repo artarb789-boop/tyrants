@@ -48,6 +48,22 @@ a { cursor: pointer; color: var(--accent); }
 .sw { display: inline-block; width: 16px; height: 16px; border-radius: 50%; border: 2px solid #d8cfee; flex: none; }
 .hint { color: var(--dim); font-size: 13px; }
 
+.joinBtn { display: block; width: 100%; margin-top: 8px; padding: 8px; background: transparent; }
+.lobby { min-width: 420px; }
+.lobby .lbl { width: 120px; flex: none; color: var(--dim); }
+.lobby input { flex: 1; background: #120d1c; color: var(--text); border: 1px solid var(--line); border-radius: 8px; padding: 7px 9px; font: inherit; }
+.lobby input.codeIn { font-size: 22px; letter-spacing: 6px; text-transform: uppercase; max-width: 170px; }
+.roomCode { font-size: 38px; font-weight: 700; letter-spacing: 10px; color: var(--gold); padding: 4px 16px; border: 1px dashed var(--gold); border-radius: 10px; user-select: all; }
+.lobbySeat { display: flex; align-items: center; gap: 8px; padding: 5px 0; border-bottom: 1px solid var(--line); }
+.lobbySeat .house { width: 160px; color: var(--dim); }
+.lobby .ok { color: #7ee08a; }
+#netBanner { position: fixed; top: 10px; left: 50%; transform: translateX(-50%); z-index: 65; display: flex; align-items: center; gap: 12px;
+  background: #4a3a10; border: 1px solid var(--gold); border-radius: 10px; padding: 8px 14px; box-shadow: 0 6px 20px #000a; }
+.tag.me { color: var(--gold); border-color: var(--gold); }
+.tag.netTag { color: var(--inf); border-color: #3a5a7a; }
+.tag.off { color: #ff8a7a; border-color: #8a3a3a; }
+a.toBot { font-size: 12px; margin-left: 4px; }
+
 /* ---- layout ---- */
 #game { display: flex; height: 100vh; overflow: hidden; }
 #boardWrap { flex: none; width: var(--bs); height: var(--bs); max-height: 100vh; position: relative; overflow: hidden; touch-action: none; }

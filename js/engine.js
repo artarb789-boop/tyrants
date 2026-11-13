@@ -201,7 +201,7 @@ function newGame(cfg) {
         decks: cfg.decks };
   T = buildTopology(sections);
   cfg.players.forEach((pc, i) => {
-    const P = { idx: i, name: pc.name, hex: pc.hex, house: pc.house, bot: !!pc.bot, level: pc.level || 'normal', deck: [], hand: [], discard: [], inner: [],
+    const P = { idx: i, name: pc.name, hex: pc.hex, house: pc.house, bot: !!pc.bot, remote: !!pc.remote, level: pc.level || 'normal', deck: [], hand: [], discard: [], inner: [],
                 barracks: 40, spiesFree: 5, trophies: {}, vp: 0, web: [], gems: { blue: 0, red: 0, purple: 0 }, stones: 0, stonesNew: 0 };
     for (let k = 0; k < 7; k++) P.deck.push(mkCard(cidByName('Знать')));
     for (let k = 0; k < 3; k++) P.deck.push(mkCard(cidByName('Солдат')));
